@@ -41,13 +41,17 @@ def main():
 
     app = QApplication(sys.argv)
 
-    # 기본 폰트 설정 (시스템에 없는 폰트면 Qt가 자동 폴백)
+    # 기본 폰트 설정 (시스템에 존재하는 폰트를 탐색하여 적용)
+    from PyQt6.QtGui import QFontDatabase
+    available = set(QFontDatabase.families())
     font = QFont()
-    for family in ["Segoe UI", "Malgun Gothic", "Noto Sans", "sans-serif"]:
-        font.setFamily(family)
-        if font.exactMatch():
+    for family in ["Segoe UI", "Malgun Gothic", "Noto Sans", "DejaVu Sans",
+                    "Liberation Sans", "Sans Serif"]:
+        if family in available:
+            font.setFamily(family)
             break
-    font.setPointSize(max(10, font.pointSize()))
+    font.setPointSize(10)
+    app.setFont(font)
 
     # 메인 윈도우 생성 및 표시
     window = MainWindow()

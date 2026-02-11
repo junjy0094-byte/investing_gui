@@ -9,8 +9,6 @@ DARK_THEME = """
 QMainWindow, QWidget {
     background-color: #1e1e2e;
     color: #cdd6f4;
-    font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
-    font-size: 13px;
 }
 
 /* 그룹박스 */
@@ -150,7 +148,7 @@ QTextEdit {
     border: 1px solid #45475a;
     border-radius: 6px;
     color: #a6adc8;
-    font-family: 'Consolas', 'D2Coding', monospace;
+    font-family: 'DejaVu Sans Mono', 'Liberation Mono', 'FreeMono', monospace;
     font-size: 11px;
     padding: 6px;
 }
@@ -200,8 +198,6 @@ LIGHT_THEME = """
 QMainWindow, QWidget {
     background-color: #eff1f5;
     color: #4c4f69;
-    font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
-    font-size: 13px;
 }
 
 QGroupBox {
@@ -334,7 +330,7 @@ QTextEdit {
     border: 1px solid #ccd0da;
     border-radius: 6px;
     color: #4c4f69;
-    font-family: 'Consolas', 'D2Coding', monospace;
+    font-family: 'DejaVu Sans Mono', 'Liberation Mono', 'FreeMono', monospace;
     font-size: 11px;
     padding: 6px;
 }
