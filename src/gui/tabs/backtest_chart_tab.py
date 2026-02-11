@@ -1,0 +1,279 @@
+"""
+탭 2: 백테스팅 결과 차트 탭
+- 주가 차트 + 누적 자산 곡선(Equity Curve) 이중 축 표시
+- 매수 타이밍 마커 표시
+- 체크박스로 총 납입액, 수익금, 수익률 등 오버레이 선택
+- 일별/주별/월별 보기
+- 향후 확장: 다중 전략 비교, 벤치마크 오버레이 등
+"""
+
+import logging
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("QtAgg")
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QComboBox,
+    QLabel,
+    QCheckBox,
+    QGroupBox,
+    QFrame,
+    QScrollArea,
+)
+
+from src.engine.backtest_engine import BacktestResult
+from src.gui.themes import get_matplotlib_style
+
+logger = logging.getLogger(__name__)
+
+
+class BacktestChartTab(QWidget):
+    """백테스팅 결과 시각화 탭"""
+
+    def __init__(self, theme: str = "dark", parent=None):
+        super().__init__(parent)
+        self._theme = theme
+        self._result: Optional[BacktestResult] = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        # --- 상단 컨트롤 바 ---
+        ctrl_layout = QHBoxLayout()
+        ctrl_layout.setSpacing(10)
+
+        # 봉 주기
+        ctrl_layout.addWidget(QLabel("View:"))
+        self.period_combo = QComboBox()
+        self.period_combo.addItems(["Daily", "Weekly", "Monthly"])
+        self.period_combo.currentIndexChanged.connect(self._redraw)
+        ctrl_layout.addWidget(self.period_combo)
+
+        ctrl_layout.addWidget(self._vsep())
+
+        # 오버레이 체크박스
+        ctrl_layout.addWidget(QLabel("Overlay:"))
+
+        self.chk_invested = QCheckBox("Total Invested")
+        self.chk_invested.setChecked(True)
+        self.chk_invested.stateChanged.connect(self._redraw)
+        ctrl_layout.addWidget(self.chk_invested)
+
+        self.chk_profit = QCheckBox("Profit ($)")
+        self.chk_profit.setChecked(False)
+        self.chk_profit.stateChanged.connect(self._redraw)
+        ctrl_layout.addWidget(self.chk_profit)
+
+        self.chk_return = QCheckBox("Return (%)")
+        self.chk_return.setChecked(False)
+        self.chk_return.stateChanged.connect(self._redraw)
+        ctrl_layout.addWidget(self.chk_return)
+
+        self.chk_markers = QCheckBox("Buy Markers")
+        self.chk_markers.setChecked(True)
+        self.chk_markers.stateChanged.connect(self._redraw)
+        ctrl_layout.addWidget(self.chk_markers)
+
+        ctrl_layout.addStretch()
+        layout.addLayout(ctrl_layout)
+
+        # --- 요약 정보 라벨 ---
+        self.summary_label = QLabel("")
+        self.summary_label.setObjectName("summaryLabel")
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+
+        # --- matplotlib 캔버스 ---
+        style = get_matplotlib_style(self._theme)
+        with plt.rc_context(style):
+            self.fig, self.ax_price = plt.subplots(figsize=(12, 6))
+            self.fig.subplots_adjust(left=0.07, right=0.88, top=0.92, bottom=0.10)
+
+        self.canvas = FigureCanvas(self.fig)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.canvas, 1)
+
+    def _vsep(self) -> QFrame:
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        return sep
+
+    # ------------------------------------------------------------------
+    # 공개 API
+    # ------------------------------------------------------------------
+    def set_result(self, result: BacktestResult):
+        """백테스트 결과를 설정하고 차트를 그린다."""
+        self._result = result
+        self._update_summary()
+        self._redraw()
+
+    def set_theme(self, theme: str):
+        self._theme = theme
+        self._redraw()
+
+    # ------------------------------------------------------------------
+    # 내부
+    # ------------------------------------------------------------------
+    def _update_summary(self):
+        """요약 통계 라벨 업데이트"""
+        if self._result is None:
+            self.summary_label.setText("")
+            return
+
+        r = self._result
+        color_profit = "color: #a6e3a1;" if r.total_profit >= 0 else "color: #f38ba8;"
+        self.summary_label.setText(
+            f"<b>{r.ticker}</b> | Strategy: {r.strategy_name} | "
+            f"Buys: {r.num_buys} | "
+            f"Invested: <b>${r.total_invested:,.0f}</b> | "
+            f"Final Value: <b>${r.final_value:,.0f}</b> | "
+            f"<span style='{color_profit}'>Profit: ${r.total_profit:,.0f} "
+            f"({r.total_return_pct:+.1f}%)</span> | "
+            f"Avg Price: ${r.avg_buy_price:,.2f} | "
+            f"MDD: {r.max_drawdown_pct:.1f}%"
+        )
+
+    def _get_display_data(self) -> pd.DataFrame:
+        """주기별 리샘플링"""
+        if self._result is None:
+            return pd.DataFrame()
+
+        df = self._result.daily_data.copy()
+        period = self.period_combo.currentText()
+
+        if period == "Weekly":
+            agg = {
+                "Open": "first", "High": "max", "Low": "min", "Close": "last",
+                "Volume": "sum", "Portfolio_Value": "last", "Total_Invested": "last",
+                "Profit": "last", "Return_Pct": "last", "Shares_Held": "last",
+                "Buy_Flag": "max", "Buy_Amount": "sum",
+            }
+            df = df.resample("W").agg(agg).dropna(subset=["Close"])
+        elif period == "Monthly":
+            agg = {
+                "Open": "first", "High": "max", "Low": "min", "Close": "last",
+                "Volume": "sum", "Portfolio_Value": "last", "Total_Invested": "last",
+                "Profit": "last", "Return_Pct": "last", "Shares_Held": "last",
+                "Buy_Flag": "max", "Buy_Amount": "sum",
+            }
+            df = df.resample("ME").agg(agg).dropna(subset=["Close"])
+
+        return df
+
+    def _redraw(self):
+        """차트를 다시 그린다."""
+        df = self._get_display_data()
+        if df.empty:
+            return
+
+        style = get_matplotlib_style(self._theme)
+
+        # 이전 축 모두 제거
+        self.fig.clear()
+
+        with plt.rc_context(style):
+            self.ax_price = self.fig.add_subplot(111)
+            self.ax_price.set_facecolor(style["axes.facecolor"])
+            self.fig.set_facecolor(style["figure.facecolor"])
+
+            # 1) 주가 차트 (왼쪽 축)
+            price_color = "#89b4fa" if self._theme == "dark" else "#1e66f5"
+            self.ax_price.plot(
+                df.index, df["Close"], color=price_color, linewidth=1.2,
+                label="Price", alpha=0.9,
+            )
+            self.ax_price.set_ylabel("Price (USD)", color=price_color)
+            self.ax_price.tick_params(axis="y", labelcolor=price_color)
+
+            # 2) 매수 마커
+            if self.chk_markers.isChecked():
+                buy_dates = df[df["Buy_Flag"] > 0]
+                if not buy_dates.empty:
+                    marker_color = "#f9e2af" if self._theme == "dark" else "#df8e1d"
+                    self.ax_price.scatter(
+                        buy_dates.index, buy_dates["Close"],
+                        marker="^", color=marker_color, s=60, zorder=5,
+                        label="Buy", edgecolors="none",
+                    )
+
+            # 3) 누적 자산 곡선 (오른쪽 축)
+            ax_equity = self.ax_price.twinx()
+            equity_color = "#a6e3a1" if self._theme == "dark" else "#40a02b"
+            ax_equity.plot(
+                df.index, df["Portfolio_Value"], color=equity_color,
+                linewidth=1.8, label="Portfolio Value", alpha=0.9,
+            )
+            ax_equity.set_ylabel("Portfolio Value (USD)", color=equity_color)
+            ax_equity.tick_params(axis="y", labelcolor=equity_color)
+
+            # 4) 총 납입액 오버레이
+            if self.chk_invested.isChecked():
+                inv_color = "#cba6f7" if self._theme == "dark" else "#8839ef"
+                ax_equity.plot(
+                    df.index, df["Total_Invested"], color=inv_color,
+                    linewidth=1.2, linestyle="--", label="Total Invested", alpha=0.8,
+                )
+
+            # 5) 수익금 오버레이
+            if self.chk_profit.isChecked():
+                ax_profit = self.ax_price.twinx()
+                ax_profit.spines["right"].set_position(("axes", 1.08))
+                profit_color = "#fab387" if self._theme == "dark" else "#fe640b"
+                ax_profit.plot(
+                    df.index, df["Profit"], color=profit_color,
+                    linewidth=1.0, linestyle="-.", label="Profit ($)", alpha=0.8,
+                )
+                ax_profit.set_ylabel("Profit ($)", color=profit_color)
+                ax_profit.tick_params(axis="y", labelcolor=profit_color)
+
+            # 6) 수익률 오버레이
+            if self.chk_return.isChecked():
+                ax_return = self.ax_price.twinx()
+                offset = 1.08 if not self.chk_profit.isChecked() else 1.16
+                ax_return.spines["right"].set_position(("axes", offset))
+                ret_color = "#f38ba8" if self._theme == "dark" else "#d20f39"
+                ax_return.plot(
+                    df.index, df["Return_Pct"], color=ret_color,
+                    linewidth=1.0, linestyle=":", label="Return (%)", alpha=0.8,
+                )
+                ax_return.set_ylabel("Return (%)", color=ret_color)
+                ax_return.tick_params(axis="y", labelcolor=ret_color)
+
+            # 제목/그리드/범례
+            self.ax_price.set_title(
+                f"{self._result.ticker} - Backtest: {self._result.strategy_name}",
+                color=style["text.color"], fontsize=14, fontweight="bold",
+            )
+            self.ax_price.grid(True, alpha=float(style["grid.alpha"]), color=style["grid.color"])
+
+            # 범례 합치기
+            lines1, labels1 = self.ax_price.get_legend_handles_labels()
+            lines2, labels2 = ax_equity.get_legend_handles_labels()
+            self.ax_price.legend(
+                lines1 + lines2, labels1 + labels2,
+                loc="upper left", fontsize=9,
+                facecolor=style["legend.facecolor"],
+                edgecolor=style["legend.edgecolor"],
+            )
+
+            self.ax_price.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+            self.fig.autofmt_xdate(rotation=30)
+
+            self.fig.subplots_adjust(left=0.07, right=0.88, top=0.92, bottom=0.12)
+
+        self.canvas.draw_idle()
