@@ -41,9 +41,13 @@ def main():
 
     app = QApplication(sys.argv)
 
-    # 기본 폰트 설정
-    font = QFont("Segoe UI", 10)
-    app.setFont(font)
+    # 기본 폰트 설정 (시스템에 없는 폰트면 Qt가 자동 폴백)
+    font = QFont()
+    for family in ["Segoe UI", "Malgun Gothic", "Noto Sans", "sans-serif"]:
+        font.setFamily(family)
+        if font.exactMatch():
+            break
+    font.setPointSize(max(10, font.pointSize()))
 
     # 메인 윈도우 생성 및 표시
     window = MainWindow()
