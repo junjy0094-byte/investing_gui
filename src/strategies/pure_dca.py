@@ -75,7 +75,7 @@ class PureDCAStrategy(BaseStrategy):
                     TradeSignal(
                         date=target_date,
                         action="BUY",
-                        amount_usd=round(current_amount, 2),
+                        amount_krw=round(current_amount, 0),
                         reason=f"DCA 매수 (매월 {buy_day}일)",
                     )
                 )

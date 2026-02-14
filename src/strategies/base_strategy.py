@@ -16,7 +16,7 @@ class TradeSignal:
     """매수/매도 신호 데이터"""
     date: pd.Timestamp
     action: str          # 'BUY', 'SELL', 'HOLD'
-    amount_usd: float    # 투입 금액 (USD)
+    amount_krw: float    # 투입 금액 (KRW)
     reason: str = ""     # 신호 발생 이유 (로그용)
 
 
@@ -48,7 +48,7 @@ class BaseStrategy(ABC):
         ----------
         price_data         : OHLCV DataFrame (index=Date)
         buy_day            : 매월 매수일 (1~28)
-        monthly_amount     : 월 투자금 (USD)
+        monthly_amount     : 월 투자금 (KRW)
         annual_increase_pct: 매년 투자금 증가율 (%)
         start_date         : 백테스트 시작일
         end_date           : 백테스트 종료일

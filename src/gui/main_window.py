@@ -4,11 +4,9 @@
 - 백테스트 실행 워커 스레드 관리
 - 테마 토글
 - CSV 저장 기능
-- 향후 확장: 다중 백테스트 비교, 탭 추가 등
 """
 
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -59,7 +57,6 @@ class QTextEditLogHandler(logging.Handler):
 
     def emit(self, record):
         msg = self.format(record)
-        # 스레드 안전을 위해 직접 append
         self.text_edit.append(msg)
 
 
@@ -87,32 +84,44 @@ class BacktestWorker(QObject):
     def run(self):
         try:
             p = self.params
-            self.progress.emit(10)
+            self.progress.emit(5)
 
-            # 1) 데이터 다운로드
+            # 1) 주가 데이터 다운로드
             logger.info(f"데이터 다운로드 시작: {p['ticker']}")
             price_data = self.data_manager.get_price_data(
                 ticker=p["ticker"],
                 start=p["start_date"],
                 end=p["end_date"],
             )
-            self.progress.emit(40)
+            self.progress.emit(25)
 
             if price_data.empty:
                 self.error.emit(f"데이터를 가져올 수 없습니다: {p['ticker']}")
                 self.finished.emit(None)
                 return
 
-            # 2) 전략 선택 (향후 확장: 전략 팩토리 패턴)
+            # 2) USD/KRW 환율 데이터 다운로드
+            logger.info("USD/KRW 환율 데이터 다운로드 중...")
+            exchange_rate_data = self.data_manager.get_exchange_rate_data(
+                start=p["start_date"],
+                end=p["end_date"],
+            )
+            self.progress.emit(40)
+
+            # 3) 현재 환율 조회
+            current_rate = self.data_manager.get_current_exchange_rate()
+            self.progress.emit(50)
+
+            # 4) 전략 선택
             strategy_name = p.get("strategy", "Pure DCA")
             if strategy_name == "Pure DCA":
                 strategy = PureDCAStrategy()
             else:
                 strategy = PureDCAStrategy()  # 기본값
 
-            self.progress.emit(50)
+            self.progress.emit(55)
 
-            # 3) 백테스트 실행
+            # 5) 백테스트 실행
             logger.info("백테스트 실행 중...")
             result = self.engine.run(
                 ticker=p["ticker"],
@@ -124,6 +133,8 @@ class BacktestWorker(QObject):
                 start_date=p["start_date"],
                 end_date=p["end_date"],
                 holiday_rule=p["holiday_rule"],
+                exchange_rate_data=exchange_rate_data,
+                current_exchange_rate=current_rate,
             )
             self.progress.emit(90)
 
@@ -235,7 +246,6 @@ class MainWindow(QMainWindow):
         handler.setFormatter(
             logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
         )
-        # 루트 로거에 핸들러 추가
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
         root_logger.setLevel(logging.INFO)
@@ -355,7 +365,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Backtest complete: {result.ticker} | "
             f"Return: {result.total_return_pct:+.1f}% | "
-            f"MDD: {result.max_drawdown_pct:.1f}%"
+            f"Profit: ₩{result.total_profit_krw:,.0f} | "
+            f"Rate: ₩{result.current_exchange_rate:,.0f}/USD"
         )
 
     def _on_save_csv(self):
@@ -378,11 +389,14 @@ class MainWindow(QMainWindow):
 
         try:
             df = self._current_result.daily_data.copy()
-            # 저장할 컬럼 정리
             save_cols = [
                 "Open", "High", "Low", "Close", "Volume",
-                "Buy_Flag", "Buy_Amount", "Shares_Bought", "Shares_Held",
-                "Total_Invested", "Portfolio_Value", "Profit", "Return_Pct",
+                "Exchange_Rate",
+                "Buy_Flag", "Buy_Amount_KRW", "Buy_Amount_USD",
+                "Shares_Bought", "Shares_Held",
+                "Total_Invested_KRW", "Total_Invested_USD",
+                "Portfolio_Value_USD", "Portfolio_Value_KRW",
+                "Profit_USD", "Profit_KRW", "Return_Pct",
             ]
             existing = [c for c in save_cols if c in df.columns]
             df[existing].to_csv(file_path)
@@ -397,7 +411,6 @@ class MainWindow(QMainWindow):
         self.config_manager.set("window_width", self.width())
         self.config_manager.set("window_height", self.height())
         self.config_manager.save()
-        # 워커 스레드 정리
         if self._worker_thread and self._worker_thread.isRunning():
             self._worker_thread.quit()
             self._worker_thread.wait(3000)

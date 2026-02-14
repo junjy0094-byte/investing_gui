@@ -84,6 +84,79 @@ class DataManager:
         logger.error(f"데이터 다운로드 실패: {ticker}")
         return pd.DataFrame()
 
+    def get_exchange_rate_data(
+        self,
+        start: str,
+        end: str,
+        force_download: bool = False,
+    ) -> pd.DataFrame:
+        """
+        USD/KRW 환율 데이터를 가져온다.
+
+        Returns
+        -------
+        pd.DataFrame  -  Close 컬럼에 환율 (예: 1350.0), index=Date
+        """
+        ticker = "USDKRW=X"
+        cache_key = f"{ticker}_{start}_{end}"
+
+        if not force_download and cache_key in self._memory_cache:
+            logger.info(f"[메모리캐시] 환율 {cache_key} 히트")
+            return self._memory_cache[cache_key].copy()
+
+        cache_path = self._get_cache_path(ticker, start, end)
+        if not force_download and cache_path.exists():
+            try:
+                df = pd.read_parquet(cache_path)
+                if not df.empty:
+                    logger.info(f"[파일캐시] 환율 {cache_path.name} 로드 ({len(df)}행)")
+                    self._memory_cache[cache_key] = df
+                    return df.copy()
+            except Exception as e:
+                logger.warning(f"환율 캐시 읽기 실패: {e}")
+
+        df = self._download(ticker, start, end)
+        if df is not None and not df.empty:
+            # 환율 데이터에 빈 날짜가 있을 수 있으므로 forward-fill
+            df["Close"] = df["Close"].ffill()
+            self._save_cache(df, cache_path)
+            self._memory_cache[cache_key] = df
+            return df.copy()
+
+        logger.error("USD/KRW 환율 데이터 다운로드 실패")
+        return pd.DataFrame()
+
+    def get_current_exchange_rate(self) -> float:
+        """
+        오늘 날짜 기준 최신 USD/KRW 환율을 반환한다.
+        실패 시 기본값 1350.0 반환.
+        """
+        try:
+            ticker_obj = yf.Ticker("USDKRW=X")
+            info = ticker_obj.fast_info
+            rate = info.get("lastPrice", None) or info.get("regularMarketPrice", None)
+            if rate and rate > 0:
+                logger.info(f"[환율] 현재 USD/KRW = {rate:.2f}")
+                return float(rate)
+        except Exception as e:
+            logger.warning(f"현재 환율 조회 실패: {e}")
+
+        # fallback: 최근 데이터에서 마지막 값 사용
+        try:
+            from datetime import datetime, timedelta
+            end = datetime.now().strftime("%Y-%m-%d")
+            start = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
+            df = self._download("USDKRW=X", start, end)
+            if df is not None and not df.empty:
+                rate = float(df["Close"].iloc[-1])
+                logger.info(f"[환율 fallback] USD/KRW = {rate:.2f}")
+                return rate
+        except Exception:
+            pass
+
+        logger.warning("[환율] 기본값 사용: 1350.0")
+        return 1350.0
+
     def clear_cache(self, ticker: Optional[str] = None):
         """캐시 삭제. ticker가 None이면 전체 삭제."""
         if ticker:

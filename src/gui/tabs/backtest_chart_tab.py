@@ -1,10 +1,10 @@
 """
 탭 2: 백테스팅 결과 차트 탭
 - 주가 차트 + 누적 자산 곡선(Equity Curve) 이중 축 표시
+- KRW 기준 수익금/수익률 표시 (환율 반영)
 - 매수 타이밍 마커 표시
 - 체크박스로 총 납입액, 수익금, 수익률 등 오버레이 선택
 - 일별/주별/월별 보기
-- 향후 확장: 다중 전략 비교, 벤치마크 오버레이 등
 """
 
 import logging
@@ -72,7 +72,7 @@ class BacktestChartTab(QWidget):
         self.chk_invested.stateChanged.connect(self._redraw)
         ctrl_layout.addWidget(self.chk_invested)
 
-        self.chk_profit = QCheckBox("Profit ($)")
+        self.chk_profit = QCheckBox("Profit (KRW)")
         self.chk_profit.setChecked(False)
         self.chk_profit.stateChanged.connect(self._redraw)
         ctrl_layout.addWidget(self.chk_profit)
@@ -130,22 +130,26 @@ class BacktestChartTab(QWidget):
     # 내부
     # ------------------------------------------------------------------
     def _update_summary(self):
-        """요약 통계 라벨 업데이트"""
+        """요약 통계 라벨 업데이트 (KRW 기준)"""
         if self._result is None:
             self.summary_label.setText("")
             return
 
         r = self._result
-        color_profit = "color: #a6e3a1;" if r.total_profit >= 0 else "color: #f38ba8;"
+        color_profit = "color: #a6e3a1;" if r.total_profit_krw >= 0 else "color: #f38ba8;"
         self.summary_label.setText(
             f"<b>{r.ticker}</b> | Strategy: {r.strategy_name} | "
             f"Buys: {r.num_buys} | "
-            f"Invested: <b>${r.total_invested:,.0f}</b> | "
-            f"Final Value: <b>${r.final_value:,.0f}</b> | "
-            f"<span style='{color_profit}'>Profit: ${r.total_profit:,.0f} "
+            f"Invested: <b>₩{r.total_invested_krw:,.0f}</b> "
+            f"(${r.total_invested_usd:,.0f}) | "
+            f"Final: <b>₩{r.final_value_krw:,.0f}</b> "
+            f"(${r.final_value_usd:,.0f}) | "
+            f"<span style='{color_profit}'>"
+            f"Profit: ₩{r.total_profit_krw:,.0f} "
             f"({r.total_return_pct:+.1f}%)</span> | "
             f"Avg Price: ${r.avg_buy_price:,.2f} | "
-            f"MDD: {r.max_drawdown_pct:.1f}%"
+            f"MDD: {r.max_drawdown_pct:.1f}% | "
+            f"Rate: ₩{r.current_exchange_rate:,.0f}/USD"
         )
 
     def _get_display_data(self) -> pd.DataFrame:
@@ -156,22 +160,19 @@ class BacktestChartTab(QWidget):
         df = self._result.daily_data.copy()
         period = self.period_combo.currentText()
 
-        if period == "Weekly":
+        if period in ("Weekly", "Monthly"):
+            rule = "W" if period == "Weekly" else "ME"
             agg = {
                 "Open": "first", "High": "max", "Low": "min", "Close": "last",
-                "Volume": "sum", "Portfolio_Value": "last", "Total_Invested": "last",
-                "Profit": "last", "Return_Pct": "last", "Shares_Held": "last",
-                "Buy_Flag": "max", "Buy_Amount": "sum",
+                "Volume": "sum",
+                "Exchange_Rate": "last",
+                "Portfolio_Value_USD": "last", "Portfolio_Value_KRW": "last",
+                "Total_Invested_KRW": "last", "Total_Invested_USD": "last",
+                "Profit_USD": "last", "Profit_KRW": "last",
+                "Return_Pct": "last", "Shares_Held": "last",
+                "Buy_Flag": "max", "Buy_Amount_KRW": "sum", "Buy_Amount_USD": "sum",
             }
-            df = df.resample("W").agg(agg).dropna(subset=["Close"])
-        elif period == "Monthly":
-            agg = {
-                "Open": "first", "High": "max", "Low": "min", "Close": "last",
-                "Volume": "sum", "Portfolio_Value": "last", "Total_Invested": "last",
-                "Profit": "last", "Return_Pct": "last", "Shares_Held": "last",
-                "Buy_Flag": "max", "Buy_Amount": "sum",
-            }
-            df = df.resample("ME").agg(agg).dropna(subset=["Close"])
+            df = df.resample(rule).agg(agg).dropna(subset=["Close"])
 
         return df
 
@@ -195,7 +196,7 @@ class BacktestChartTab(QWidget):
             price_color = "#89b4fa" if self._theme == "dark" else "#1e66f5"
             self.ax_price.plot(
                 df.index, df["Close"], color=price_color, linewidth=1.2,
-                label="Price", alpha=0.9,
+                label="Price (USD)", alpha=0.9,
             )
             self.ax_price.set_ylabel("Price (USD)", color=price_color)
             self.ax_price.tick_params(axis="y", labelcolor=price_color)
@@ -211,35 +212,42 @@ class BacktestChartTab(QWidget):
                         label="Buy", edgecolors="none",
                     )
 
-            # 3) 누적 자산 곡선 (오른쪽 축)
+            # 3) 누적 자산 곡선 - KRW (오른쪽 축)
             ax_equity = self.ax_price.twinx()
             equity_color = "#a6e3a1" if self._theme == "dark" else "#40a02b"
             ax_equity.plot(
-                df.index, df["Portfolio_Value"], color=equity_color,
-                linewidth=1.8, label="Portfolio Value", alpha=0.9,
+                df.index, df["Portfolio_Value_KRW"], color=equity_color,
+                linewidth=1.8, label="Portfolio (KRW)", alpha=0.9,
             )
-            ax_equity.set_ylabel("Portfolio Value (USD)", color=equity_color)
+            ax_equity.set_ylabel("Portfolio Value (KRW)", color=equity_color)
             ax_equity.tick_params(axis="y", labelcolor=equity_color)
+            # KRW 축 포매팅 (만원 단위)
+            ax_equity.yaxis.set_major_formatter(
+                plt.FuncFormatter(lambda x, _: f"₩{x:,.0f}")
+            )
 
-            # 4) 총 납입액 오버레이
+            # 4) 총 납입액 오버레이 (KRW)
             if self.chk_invested.isChecked():
                 inv_color = "#cba6f7" if self._theme == "dark" else "#8839ef"
                 ax_equity.plot(
-                    df.index, df["Total_Invested"], color=inv_color,
-                    linewidth=1.2, linestyle="--", label="Total Invested", alpha=0.8,
+                    df.index, df["Total_Invested_KRW"], color=inv_color,
+                    linewidth=1.2, linestyle="--", label="Invested (KRW)", alpha=0.8,
                 )
 
-            # 5) 수익금 오버레이
+            # 5) 수익금 오버레이 (KRW)
             if self.chk_profit.isChecked():
                 ax_profit = self.ax_price.twinx()
                 ax_profit.spines["right"].set_position(("axes", 1.08))
                 profit_color = "#fab387" if self._theme == "dark" else "#fe640b"
                 ax_profit.plot(
-                    df.index, df["Profit"], color=profit_color,
-                    linewidth=1.0, linestyle="-.", label="Profit ($)", alpha=0.8,
+                    df.index, df["Profit_KRW"], color=profit_color,
+                    linewidth=1.0, linestyle="-.", label="Profit (KRW)", alpha=0.8,
                 )
-                ax_profit.set_ylabel("Profit ($)", color=profit_color)
+                ax_profit.set_ylabel("Profit (KRW)", color=profit_color)
                 ax_profit.tick_params(axis="y", labelcolor=profit_color)
+                ax_profit.yaxis.set_major_formatter(
+                    plt.FuncFormatter(lambda x, _: f"₩{x:,.0f}")
+                )
 
             # 6) 수익률 오버레이
             if self.chk_return.isChecked():

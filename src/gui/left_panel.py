@@ -100,12 +100,12 @@ class LeftPanel(QWidget):
         self.holiday_rule.addItems(["before (직전 거래일)", "after (직후 거래일)"])
         period_layout.addWidget(self.holiday_rule)
 
-        # 월 투자금
-        period_layout.addWidget(QLabel("Monthly Investment (USD):"))
+        # 월 투자금 (KRW)
+        period_layout.addWidget(QLabel("Monthly Investment (KRW):"))
         self.monthly_amount = QDoubleSpinBox()
-        self.monthly_amount.setRange(10, 1_000_000)
-        self.monthly_amount.setSingleStep(100)
-        self.monthly_amount.setPrefix("$ ")
+        self.monthly_amount.setRange(10000, 100_000_000)
+        self.monthly_amount.setSingleStep(10000)
+        self.monthly_amount.setPrefix("₩ ")
         self.monthly_amount.setDecimals(0)
         period_layout.addWidget(self.monthly_amount)
 

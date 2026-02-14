@@ -21,7 +21,7 @@ DEFAULT_CONFIG = {
     "start_date": "2020-01-01",
     "end_date": "2025-12-31",
     "buy_day": 20,
-    "monthly_amount": 4000,
+    "monthly_amount": 500000,
     "annual_increase_pct": 0.0,
     "holiday_rule": "before",  # 'before' 또는 'after'
     "strategy": "Pure DCA",
