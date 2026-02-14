@@ -63,6 +63,8 @@ class BacktestEngine:
         holiday_rule: str = "before",
         exchange_rate_data: Optional[pd.DataFrame] = None,
         current_exchange_rate: float = 1350.0,
+        buy_frequency: str = "monthly",
+        buy_weekday: int = 0,
     ) -> Optional[BacktestResult]:
         """
         백테스트 메인 실행 함수.
@@ -71,6 +73,8 @@ class BacktestEngine:
         ----------
         exchange_rate_data : 일별 USD/KRW 환율 DataFrame (index=Date, Close 컬럼)
         current_exchange_rate : 현재 환율 (최종 자산 KRW 환산 시 사용)
+        buy_frequency : 매수 주기 ('monthly' 또는 'weekly')
+        buy_weekday : 주별 매수 요일 (0=월~4=금)
 
         Returns
         -------
@@ -86,6 +90,8 @@ class BacktestEngine:
                 start_date=start_date,
                 end_date=end_date,
                 holiday_rule=holiday_rule,
+                buy_frequency=buy_frequency,
+                buy_weekday=buy_weekday,
             )
 
             if not signals:

@@ -40,6 +40,8 @@ class BaseStrategy(ABC):
         start_date: str,
         end_date: str,
         holiday_rule: str,  # 'before' 또는 'after'
+        buy_frequency: str = "monthly",  # 'monthly' 또는 'weekly'
+        buy_weekday: int = 0,  # 0=월, 1=화, 2=수, 3=목, 4=금
     ) -> list[TradeSignal]:
         """
         주어진 가격 데이터와 파라미터로 매수 신호 리스트를 생성.
@@ -47,12 +49,14 @@ class BaseStrategy(ABC):
         Parameters
         ----------
         price_data         : OHLCV DataFrame (index=Date)
-        buy_day            : 매월 매수일 (1~28)
-        monthly_amount     : 월 투자금 (KRW)
+        buy_day            : 매월 매수일 (1~28, monthly 모드)
+        monthly_amount     : 투자금 (KRW) - monthly면 월, weekly면 주
         annual_increase_pct: 매년 투자금 증가율 (%)
         start_date         : 백테스트 시작일
         end_date           : 백테스트 종료일
         holiday_rule       : 휴장일 처리 ('before'=직전 거래일, 'after'=직후 거래일)
+        buy_frequency      : 매수 주기 ('monthly' 또는 'weekly')
+        buy_weekday        : 주별 매수 요일 (0=월~4=금, weekly 모드)
 
         Returns
         -------

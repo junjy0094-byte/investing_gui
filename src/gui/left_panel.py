@@ -87,12 +87,33 @@ class LeftPanel(QWidget):
         self.end_date.setDisplayFormat("yyyy-MM-dd")
         period_layout.addWidget(self.end_date)
 
+        # 매수 주기 (월별/주별)
+        period_layout.addWidget(QLabel("Buy Frequency:"))
+        self.buy_frequency = QComboBox()
+        self.buy_frequency.addItems(["Monthly (월별)", "Weekly (주별)"])
+        self.buy_frequency.currentIndexChanged.connect(self._on_frequency_changed)
+        period_layout.addWidget(self.buy_frequency)
+
         # 매수일
-        period_layout.addWidget(QLabel("Buy Day of Month:"))
+        self.buy_day_label = QLabel("Buy Day of Month:")
+        period_layout.addWidget(self.buy_day_label)
         self.buy_day = QSpinBox()
         self.buy_day.setRange(1, 28)
         self.buy_day.setToolTip("매월 매수할 날짜 (1~28)")
         period_layout.addWidget(self.buy_day)
+
+        # 매수 요일 (주별 모드용)
+        self.buy_weekday_label = QLabel("Buy Day of Week:")
+        period_layout.addWidget(self.buy_weekday_label)
+        self.buy_weekday = QComboBox()
+        self.buy_weekday.addItems([
+            "Monday (월)", "Tuesday (화)", "Wednesday (수)",
+            "Thursday (목)", "Friday (금)",
+        ])
+        period_layout.addWidget(self.buy_weekday)
+        # 초기에는 주별 위젯 숨김
+        self.buy_weekday_label.setVisible(False)
+        self.buy_weekday.setVisible(False)
 
         # 휴장일 처리
         period_layout.addWidget(QLabel("Holiday Rule:"))
@@ -100,8 +121,9 @@ class LeftPanel(QWidget):
         self.holiday_rule.addItems(["before (직전 거래일)", "after (직후 거래일)"])
         period_layout.addWidget(self.holiday_rule)
 
-        # 월 투자금 (KRW)
-        period_layout.addWidget(QLabel("Monthly Investment (KRW):"))
+        # 투자금 (KRW)
+        self.amount_label = QLabel("Monthly Investment (KRW):")
+        period_layout.addWidget(self.amount_label)
         self.monthly_amount = QDoubleSpinBox()
         self.monthly_amount.setRange(10000, 100_000_000)
         self.monthly_amount.setSingleStep(10000)
@@ -173,20 +195,43 @@ class LeftPanel(QWidget):
         self.start_date.setDate(QDate.fromString(config.get("start_date", "2020-01-01"), "yyyy-MM-dd"))
         self.end_date.setDate(QDate.fromString(config.get("end_date", "2025-12-31"), "yyyy-MM-dd"))
         self.buy_day.setValue(config.get("buy_day", 20))
-        self.monthly_amount.setValue(config.get("monthly_amount", 4000))
+        self.buy_weekday.setCurrentIndex(config.get("buy_weekday", 0))
+        self.monthly_amount.setValue(config.get("monthly_amount", 500000))
         self.annual_increase.setValue(config.get("annual_increase_pct", 0.0))
+
+        freq = config.get("buy_frequency", "monthly")
+        self.buy_frequency.setCurrentIndex(0 if freq == "monthly" else 1)
+        self._on_frequency_changed(self.buy_frequency.currentIndex())
 
         rule = config.get("holiday_rule", "before")
         self.holiday_rule.setCurrentIndex(0 if rule == "before" else 1)
 
+    def _on_frequency_changed(self, index: int):
+        """매수 주기 변경 시 UI 동적 전환"""
+        is_weekly = index == 1
+        # 월별 위젯
+        self.buy_day_label.setVisible(not is_weekly)
+        self.buy_day.setVisible(not is_weekly)
+        # 주별 위젯
+        self.buy_weekday_label.setVisible(is_weekly)
+        self.buy_weekday.setVisible(is_weekly)
+        # 라벨 변경
+        if is_weekly:
+            self.amount_label.setText("Weekly Investment (KRW):")
+        else:
+            self.amount_label.setText("Monthly Investment (KRW):")
+
     def get_params(self) -> dict:
         """현재 입력된 파라미터를 딕셔너리로 반환"""
         rule = "before" if self.holiday_rule.currentIndex() == 0 else "after"
+        freq = "monthly" if self.buy_frequency.currentIndex() == 0 else "weekly"
         return {
             "ticker": self.ticker_input.text().strip().upper(),
             "start_date": self.start_date.date().toString("yyyy-MM-dd"),
             "end_date": self.end_date.date().toString("yyyy-MM-dd"),
+            "buy_frequency": freq,
             "buy_day": self.buy_day.value(),
+            "buy_weekday": self.buy_weekday.currentIndex(),
             "monthly_amount": self.monthly_amount.value(),
             "annual_increase_pct": self.annual_increase.value(),
             "holiday_rule": rule,

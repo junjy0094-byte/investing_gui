@@ -135,6 +135,8 @@ class BacktestWorker(QObject):
                 holiday_rule=p["holiday_rule"],
                 exchange_rate_data=exchange_rate_data,
                 current_exchange_rate=current_rate,
+                buy_frequency=p.get("buy_frequency", "monthly"),
+                buy_weekday=p.get("buy_weekday", 0),
             )
             self.progress.emit(90)
 

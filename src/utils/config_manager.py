@@ -20,7 +20,9 @@ DEFAULT_CONFIG = {
     "ticker": "QQQ",
     "start_date": "2020-01-01",
     "end_date": "2025-12-31",
+    "buy_frequency": "monthly",  # 'monthly' 또는 'weekly'
     "buy_day": 20,
+    "buy_weekday": 0,  # 0=월, 1=화, 2=수, 3=목, 4=금
     "monthly_amount": 500000,
     "annual_increase_pct": 0.0,
     "holiday_rule": "before",  # 'before' 또는 'after'
