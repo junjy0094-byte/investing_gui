@@ -4,6 +4,10 @@ QSS 테마 모듈
 - 향후 확장: 커스텀 테마, 테마 JSON 파일 로드 등
 """
 
+from pathlib import Path
+
+_ICONS_DIR = str(Path(__file__).resolve().parent / "icons").replace("\\", "/")
+
 DARK_THEME = """
 /* ===== 다크 테마 ===== */
 QMainWindow, QWidget {
@@ -45,11 +49,9 @@ QComboBox::drop-down {
     width: 28px;
 }
 QComboBox::down-arrow {
-    image: none;
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-top: 7px solid #89b4fa;
-    margin-right: 8px;
+    image: url({ICONS}/arrow-down-dark.svg);
+    width: 12px;
+    height: 8px;
 }
 QComboBox QAbstractItemView {
     background-color: #313244;
@@ -83,20 +85,14 @@ QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover, QDateEdit::down-
     background-color: #45475a;
 }
 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow {
-    image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-bottom: 6px solid #89b4fa;
-    width: 0;
-    height: 0;
+    image: url({ICONS}/arrow-up-dark.svg);
+    width: 10px;
+    height: 6px;
 }
 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow {
-    image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #89b4fa;
-    width: 0;
-    height: 0;
+    image: url({ICONS}/arrow-down-dark.svg);
+    width: 10px;
+    height: 6px;
 }
 
 /* 버튼 */
@@ -331,11 +327,9 @@ QComboBox::drop-down {
     width: 28px;
 }
 QComboBox::down-arrow {
-    image: none;
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-top: 7px solid #1e66f5;
-    margin-right: 8px;
+    image: url({ICONS}/arrow-down-light.svg);
+    width: 12px;
+    height: 8px;
 }
 QComboBox QAbstractItemView {
     background-color: #ffffff;
@@ -369,20 +363,14 @@ QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover, QDateEdit::down-
     background-color: #ccd0da;
 }
 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow {
-    image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-bottom: 6px solid #1e66f5;
-    width: 0;
-    height: 0;
+    image: url({ICONS}/arrow-up-light.svg);
+    width: 10px;
+    height: 6px;
 }
 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow {
-    image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #1e66f5;
-    width: 0;
-    height: 0;
+    image: url({ICONS}/arrow-down-light.svg);
+    width: 10px;
+    height: 6px;
 }
 
 QPushButton {
@@ -573,10 +561,9 @@ QToolBar {
 
 
 def get_theme_stylesheet(theme: str) -> str:
-    """테마 이름에 해당하는 QSS 반환"""
-    if theme == "dark":
-        return DARK_THEME
-    return LIGHT_THEME
+    """테마 이름에 해당하는 QSS 반환 (아이콘 경로 치환 포함)"""
+    qss = DARK_THEME if theme == "dark" else LIGHT_THEME
+    return qss.replace("{ICONS}", _ICONS_DIR)
 
 
 def get_matplotlib_style(theme: str) -> dict:
