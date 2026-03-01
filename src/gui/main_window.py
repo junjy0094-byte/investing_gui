@@ -192,7 +192,7 @@ class MainWindow(QMainWindow):
         top_bar = QHBoxLayout()
         top_bar.addStretch()
         self.theme_btn = QPushButton("Toggle Theme")
-        self.theme_btn.setFixedWidth(120)
+        self.theme_btn.setFixedWidth(140)
         self.theme_btn.clicked.connect(self._toggle_theme)
         top_bar.addWidget(self.theme_btn)
         main_layout.addLayout(top_bar)
