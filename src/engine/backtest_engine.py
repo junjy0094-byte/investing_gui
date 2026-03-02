@@ -3,10 +3,11 @@
 - 전략이 생성한 매수 신호를 기반으로 포트폴리오 시뮬레이션 수행
 - KRW로 매수하고 당일 환율로 USD 환전 후 주식 구매
 - 일별 자산 가치, 수익률, 수익금 등 계산 (KRW/USD 이중 표시)
+- 다중 종목 포트폴리오 지원
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BacktestResult:
-    """백테스트 결과 데이터 컨테이너"""
+    """단일 종목 백테스트 결과 데이터 컨테이너"""
     ticker: str
     strategy_name: str
     # 일별 상세 데이터
@@ -38,6 +39,29 @@ class BacktestResult:
     final_value_krw: float          # 최종 자산 가치 (KRW, 현재 환율 적용)
     total_profit_krw: float         # 총 수익금 (KRW)
     current_exchange_rate: float    # 현재 환율 (최종 평가 시 사용)
+    # 포트폴리오 내 비율
+    allocation_pct: float = 100.0   # 포트폴리오 내 할당 비율
+
+
+@dataclass
+class PortfolioBacktestResult:
+    """다중 종목 포트폴리오 백테스트 결과"""
+    portfolio: list[dict]                           # [{"ticker": "QQQ", "ratio": 50}, ...]
+    strategy_name: str
+    per_ticker_results: dict[str, BacktestResult]   # ticker -> 개별 결과
+    # 통합 포트폴리오 일별 데이터
+    daily_data: pd.DataFrame
+    # 통합 요약 통계
+    total_invested_krw: float
+    total_invested_usd: float
+    final_value_krw: float
+    final_value_usd: float
+    total_profit_krw: float
+    total_profit_usd: float
+    total_return_pct: float
+    max_drawdown_pct: float
+    num_buys: int
+    current_exchange_rate: float
 
 
 class BacktestEngine:
@@ -65,27 +89,24 @@ class BacktestEngine:
         current_exchange_rate: float = 1350.0,
         buy_frequency: str = "monthly",
         buy_weekday: int = 0,
+        allocation_pct: float = 100.0,
     ) -> Optional[BacktestResult]:
         """
-        백테스트 메인 실행 함수.
+        단일 종목 백테스트 실행.
 
         Parameters
         ----------
-        exchange_rate_data : 일별 USD/KRW 환율 DataFrame (index=Date, Close 컬럼)
-        current_exchange_rate : 현재 환율 (최종 자산 KRW 환산 시 사용)
-        buy_frequency : 매수 주기 ('monthly' 또는 'weekly')
-        buy_weekday : 주별 매수 요일 (0=월~4=금)
-
-        Returns
-        -------
-        BacktestResult 또는 None (실패 시)
+        allocation_pct : 포트폴리오 내 이 종목의 할당 비율 (%)
         """
         try:
+            # 실제 투자금 = 전체 금액 * 비율
+            actual_amount = monthly_amount * (allocation_pct / 100.0)
+
             # 1) 전략으로부터 매수 신호 생성
             signals = strategy.generate_signals(
                 price_data=price_data,
                 buy_day=buy_day,
-                monthly_amount=monthly_amount,
+                monthly_amount=actual_amount,
                 annual_increase_pct=annual_increase_pct,
                 start_date=start_date,
                 end_date=end_date,
@@ -95,7 +116,7 @@ class BacktestEngine:
             )
 
             if not signals:
-                logger.warning("매수 신호가 없습니다.")
+                logger.warning(f"[{ticker}] 매수 신호가 없습니다.")
                 return None
 
             # 2) 신호를 날짜별 딕셔너리로 변환
@@ -114,12 +135,84 @@ class BacktestEngine:
 
             # 4) 요약 통계 계산
             result = self._compute_summary(
-                daily_data, ticker, strategy.name, current_exchange_rate
+                daily_data, ticker, strategy.name, current_exchange_rate,
+                allocation_pct,
             )
             return result
 
         except Exception as e:
-            logger.error(f"백테스트 실행 에러: {e}", exc_info=True)
+            logger.error(f"백테스트 실행 에러 ({ticker}): {e}", exc_info=True)
+            return None
+
+    def run_portfolio(
+        self,
+        portfolio: list[dict],
+        price_data_map: dict[str, pd.DataFrame],
+        strategy: BaseStrategy,
+        buy_day: int,
+        monthly_amount: float,
+        annual_increase_pct: float,
+        start_date: str,
+        end_date: str,
+        holiday_rule: str = "before",
+        exchange_rate_data: Optional[pd.DataFrame] = None,
+        current_exchange_rate: float = 1350.0,
+        buy_frequency: str = "monthly",
+        buy_weekday: int = 0,
+    ) -> Optional[PortfolioBacktestResult]:
+        """
+        다중 종목 포트폴리오 백테스트 실행.
+
+        Parameters
+        ----------
+        portfolio : [{"ticker": "QQQ", "ratio": 50}, {"ticker": "VOO", "ratio": 50}]
+        price_data_map : {ticker: DataFrame} 각 종목의 주가 데이터
+        """
+        try:
+            per_ticker_results: dict[str, BacktestResult] = {}
+
+            for item in portfolio:
+                ticker = item["ticker"]
+                ratio = item["ratio"]
+                price_data = price_data_map.get(ticker)
+
+                if price_data is None or price_data.empty:
+                    logger.error(f"[{ticker}] 주가 데이터가 없습니다.")
+                    continue
+
+                result = self.run(
+                    ticker=ticker,
+                    price_data=price_data,
+                    strategy=strategy,
+                    buy_day=buy_day,
+                    monthly_amount=monthly_amount,
+                    annual_increase_pct=annual_increase_pct,
+                    start_date=start_date,
+                    end_date=end_date,
+                    holiday_rule=holiday_rule,
+                    exchange_rate_data=exchange_rate_data,
+                    current_exchange_rate=current_exchange_rate,
+                    buy_frequency=buy_frequency,
+                    buy_weekday=buy_weekday,
+                    allocation_pct=ratio,
+                )
+
+                if result is not None:
+                    per_ticker_results[ticker] = result
+
+            if not per_ticker_results:
+                logger.error("포트폴리오 백테스트: 유효한 결과가 없습니다.")
+                return None
+
+            # 통합 포트폴리오 데이터 계산
+            portfolio_result = self._aggregate_portfolio(
+                portfolio, per_ticker_results, strategy.name,
+                current_exchange_rate,
+            )
+            return portfolio_result
+
+        except Exception as e:
+            logger.error(f"포트폴리오 백테스트 에러: {e}", exc_info=True)
             return None
 
     def _simulate(
@@ -220,6 +313,7 @@ class BacktestEngine:
         ticker: str,
         strategy_name: str,
         current_exchange_rate: float,
+        allocation_pct: float = 100.0,
     ) -> BacktestResult:
         """요약 통계를 계산하여 BacktestResult 반환"""
         last = daily_data.iloc[-1]
@@ -269,12 +363,129 @@ class BacktestEngine:
             final_value_krw=round(final_value_krw, 0),
             total_profit_krw=round(total_profit_krw, 0),
             current_exchange_rate=round(current_exchange_rate, 2),
+            allocation_pct=allocation_pct,
         )
 
         logger.info(
-            f"[백테스트 완료] {ticker} | {strategy_name} | "
+            f"[백테스트 완료] {ticker} ({allocation_pct:.0f}%) | {strategy_name} | "
             f"투자: ₩{total_invested_krw:,.0f} → 자산: ₩{final_value_krw:,.0f} | "
-            f"수익률: {total_return_pct:.1f}% | MDD: {max_drawdown_pct:.1f}% | "
-            f"현재 환율: {current_exchange_rate:.0f}"
+            f"수익률: {total_return_pct:.1f}% | MDD: {max_drawdown_pct:.1f}%"
         )
         return result
+
+    def _aggregate_portfolio(
+        self,
+        portfolio: list[dict],
+        per_ticker_results: dict[str, BacktestResult],
+        strategy_name: str,
+        current_exchange_rate: float,
+    ) -> PortfolioBacktestResult:
+        """개별 종목 결과를 포트폴리오 수준으로 통합"""
+        # 모든 종목의 daily_data를 공통 날짜 인덱스로 정렬
+        all_dates = None
+        for ticker, result in per_ticker_results.items():
+            dates = result.daily_data.index
+            if all_dates is None:
+                all_dates = dates
+            else:
+                all_dates = all_dates.union(dates)
+
+        all_dates = all_dates.sort_values()
+
+        # 통합 DataFrame 생성
+        combined = pd.DataFrame(index=all_dates)
+        combined.index.name = "Date"
+
+        # 각 종목의 값을 통합 인덱스에 맞춰 정렬
+        total_portfolio_value_krw = pd.Series(0.0, index=all_dates)
+        total_portfolio_value_usd = pd.Series(0.0, index=all_dates)
+        total_invested_krw = pd.Series(0.0, index=all_dates)
+        total_invested_usd = pd.Series(0.0, index=all_dates)
+        total_buy_flag = pd.Series(0, index=all_dates, dtype=int)
+
+        for ticker, result in per_ticker_results.items():
+            df = result.daily_data
+            # reindex to align with all_dates, forward-fill
+            pv_krw = df["Portfolio_Value_KRW"].reindex(all_dates, method="ffill").fillna(0)
+            pv_usd = df["Portfolio_Value_USD"].reindex(all_dates, method="ffill").fillna(0)
+            inv_krw = df["Total_Invested_KRW"].reindex(all_dates, method="ffill").fillna(0)
+            inv_usd = df["Total_Invested_USD"].reindex(all_dates, method="ffill").fillna(0)
+            buy_f = df["Buy_Flag"].reindex(all_dates).fillna(0).astype(int)
+
+            # 각 종목의 Close 가격 저장 (가격 차트용)
+            combined[f"Close_{ticker}"] = df["Close"].reindex(all_dates, method="ffill")
+
+            total_portfolio_value_krw += pv_krw
+            total_portfolio_value_usd += pv_usd
+            total_invested_krw += inv_krw
+            total_invested_usd += inv_usd
+            total_buy_flag = total_buy_flag | buy_f
+
+        combined["Portfolio_Value_KRW"] = total_portfolio_value_krw
+        combined["Portfolio_Value_USD"] = total_portfolio_value_usd
+        combined["Total_Invested_KRW"] = total_invested_krw
+        combined["Total_Invested_USD"] = total_invested_usd
+        combined["Profit_KRW"] = total_portfolio_value_krw - total_invested_krw
+        combined["Profit_USD"] = total_portfolio_value_usd - total_invested_usd
+        combined["Return_Pct"] = np.where(
+            total_invested_krw > 0,
+            (combined["Profit_KRW"] / total_invested_krw) * 100,
+            0.0,
+        )
+        combined["Buy_Flag"] = total_buy_flag
+
+        # 환율 (첫 번째 종목에서 가져오기)
+        first_result = next(iter(per_ticker_results.values()))
+        fx = first_result.daily_data["Exchange_Rate"].reindex(all_dates, method="ffill")
+        combined["Exchange_Rate"] = fx
+
+        # 요약 통계
+        last_inv_krw = float(total_invested_krw.iloc[-1])
+        last_inv_usd = float(total_invested_usd.iloc[-1])
+        last_pv_usd = float(total_portfolio_value_usd.iloc[-1])
+
+        # 현재 환율로 최종 KRW 재평가
+        final_value_krw = last_pv_usd * current_exchange_rate
+        final_value_usd = last_pv_usd
+        total_profit_krw = final_value_krw - last_inv_krw
+        total_profit_usd = final_value_usd - last_inv_usd
+        total_return_pct = (
+            (total_profit_krw / last_inv_krw * 100) if last_inv_krw > 0 else 0.0
+        )
+
+        # MDD (KRW 기준)
+        pv_for_mdd = total_portfolio_value_krw.copy()
+        # 현재 환율로 보정 (마지막 구간)
+        running_max = pv_for_mdd.expanding().max()
+        drawdown = (pv_for_mdd - running_max) / running_max * 100
+        drawdown = drawdown.replace([np.inf, -np.inf], 0).fillna(0)
+        max_drawdown_pct = abs(drawdown.min())
+
+        num_buys = sum(r.num_buys for r in per_ticker_results.values())
+
+        tickers_str = " + ".join(
+            f"{item['ticker']}({item['ratio']}%)" for item in portfolio
+            if item['ticker'] in per_ticker_results
+        )
+        logger.info(
+            f"[포트폴리오 백테스트 완료] {tickers_str} | "
+            f"투자: ₩{last_inv_krw:,.0f} → 자산: ₩{final_value_krw:,.0f} | "
+            f"수익률: {total_return_pct:.1f}% | MDD: {max_drawdown_pct:.1f}%"
+        )
+
+        return PortfolioBacktestResult(
+            portfolio=portfolio,
+            strategy_name=strategy_name,
+            per_ticker_results=per_ticker_results,
+            daily_data=combined,
+            total_invested_krw=round(last_inv_krw, 0),
+            total_invested_usd=round(last_inv_usd, 2),
+            final_value_krw=round(final_value_krw, 0),
+            final_value_usd=round(final_value_usd, 2),
+            total_profit_krw=round(total_profit_krw, 0),
+            total_profit_usd=round(total_profit_usd, 2),
+            total_return_pct=round(total_return_pct, 2),
+            max_drawdown_pct=round(max_drawdown_pct, 2),
+            num_buys=num_buys,
+            current_exchange_rate=round(current_exchange_rate, 2),
+        )

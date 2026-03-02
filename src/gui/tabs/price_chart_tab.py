@@ -1,10 +1,10 @@
 """
 탭 1: 주가 차트 탭
-- 캔들스틱 / 라인 차트 표시
+- 캔들스틱 / 라인 차트 표시 (다중 종목 지원)
+- 다중 종목: 라인 차트로 비교 (정규화 옵션)
 - 일봉/주봉/월봉 선택
 - 스크롤(좌우 이동), 확대/축소, 기간 선택 기능
 - matplotlib을 PyQt6에 임베딩
-- 향후 확장: 기술 지표 오버레이(MA, BB, RSI 등), 거래량 바 차트
 """
 
 import logging
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QDateEdit,
     QFrame,
+    QCheckBox,
 )
 from PyQt6.QtCore import QDate
 
@@ -37,17 +38,30 @@ from src.gui.themes import get_matplotlib_style
 
 logger = logging.getLogger(__name__)
 
+# 다중 종목 색상 팔레트
+MULTI_COLORS_DARK = [
+    "#89b4fa", "#a6e3a1", "#fab387", "#f38ba8",
+    "#cba6f7", "#f9e2af", "#94e2d5", "#74c7ec",
+    "#f5c2e7", "#b4befe",
+]
+MULTI_COLORS_LIGHT = [
+    "#1e66f5", "#40a02b", "#fe640b", "#d20f39",
+    "#8839ef", "#df8e1d", "#179299", "#209fb5",
+    "#ea76cb", "#7287fd",
+]
+
 
 class PriceChartTab(QWidget):
-    """주가 차트 탭 위젯"""
+    """주가 차트 탭 위젯 (다중 종목 지원)"""
 
     def __init__(self, theme: str = "dark", parent=None):
         super().__init__(parent)
         self._theme = theme
-        self._price_data: Optional[pd.DataFrame] = None
-        self._ticker = ""
-        self._view_start = 0  # 현재 뷰 시작 인덱스
-        self._view_size = 252  # 기본 1년 (약 252 거래일)
+        # 다중 종목 데이터: {ticker: DataFrame}
+        self._price_data_map: dict[str, pd.DataFrame] = {}
+        self._tickers: list[str] = []
+        self._view_start = 0
+        self._view_size = 252
         self._init_ui()
 
     def _init_ui(self):
@@ -61,7 +75,7 @@ class PriceChartTab(QWidget):
         # 차트 타입
         ctrl_layout.addWidget(QLabel("Chart:"))
         self.chart_type = QComboBox()
-        self.chart_type.addItems(["Candlestick", "Line"])
+        self.chart_type.addItems(["Line", "Candlestick"])
         self.chart_type.currentIndexChanged.connect(self._redraw)
         ctrl_layout.addWidget(self.chart_type)
 
@@ -71,6 +85,15 @@ class PriceChartTab(QWidget):
         self.period_combo.addItems(["Daily", "Weekly", "Monthly"])
         self.period_combo.currentIndexChanged.connect(self._on_period_changed)
         ctrl_layout.addWidget(self.period_combo)
+
+        ctrl_layout.addWidget(self._vsep())
+
+        # 정규화 (100 기준)
+        self.chk_normalize = QCheckBox("Normalize (100)")
+        self.chk_normalize.setToolTip("시작점을 100으로 정규화하여 비교")
+        self.chk_normalize.setChecked(False)
+        self.chk_normalize.stateChanged.connect(self._redraw)
+        ctrl_layout.addWidget(self.chk_normalize)
 
         ctrl_layout.addWidget(self._vsep())
 
@@ -147,24 +170,38 @@ class PriceChartTab(QWidget):
     # 공개 API
     # ------------------------------------------------------------------
     def set_data(self, ticker: str, price_data: pd.DataFrame):
-        """새 주가 데이터를 설정하고 차트를 그린다."""
-        self._ticker = ticker
-        self._price_data = price_data.copy()
+        """단일 종목 데이터 설정 (하위 호환)"""
+        self.set_multi_data({ticker: price_data})
 
-        if not price_data.empty:
+    def set_multi_data(self, price_data_map: dict[str, pd.DataFrame]):
+        """다중 종목 데이터를 설정하고 차트를 그린다."""
+        self._price_data_map = {t: df.copy() for t, df in price_data_map.items()}
+        self._tickers = list(price_data_map.keys())
+
+        # 다중 종목이면 캔들스틱 비활성화
+        if len(self._tickers) > 1:
+            self.chart_type.setCurrentIndex(0)  # Line
+            self.chk_normalize.setVisible(True)
+        else:
+            self.chk_normalize.setVisible(True)
+
+        # 날짜 범위 설정 (전체 합집합)
+        all_dates = pd.DatetimeIndex([])
+        for df in price_data_map.values():
+            if not df.empty:
+                all_dates = all_dates.union(df.index)
+
+        if len(all_dates) > 0:
+            all_dates = all_dates.sort_values()
             self.range_start.setDate(QDate(
-                price_data.index[0].year,
-                price_data.index[0].month,
-                price_data.index[0].day,
+                all_dates[0].year, all_dates[0].month, all_dates[0].day,
             ))
             self.range_end.setDate(QDate(
-                price_data.index[-1].year,
-                price_data.index[-1].month,
-                price_data.index[-1].day,
+                all_dates[-1].year, all_dates[-1].month, all_dates[-1].day,
             ))
 
         # 최근 1년을 기본 뷰로
-        total = len(self._get_display_data())
+        total = len(self._get_combined_index())
         self._view_size = min(252, total)
         self._view_start = max(0, total - self._view_size)
         self._redraw()
@@ -176,46 +213,69 @@ class PriceChartTab(QWidget):
     # ------------------------------------------------------------------
     # 내부: 데이터 변환
     # ------------------------------------------------------------------
-    def _get_display_data(self) -> pd.DataFrame:
-        """현재 선택된 봉 주기에 맞춰 데이터를 리샘플링"""
-        if self._price_data is None or self._price_data.empty:
-            return pd.DataFrame()
+    def _get_combined_index(self) -> pd.DatetimeIndex:
+        """모든 종목의 날짜 합집합 (리샘플링 반영)"""
+        if not self._price_data_map:
+            return pd.DatetimeIndex([])
 
-        df = self._price_data.copy()
         period = self.period_combo.currentText()
+        all_dates = pd.DatetimeIndex([])
+
+        for ticker, df in self._price_data_map.items():
+            resampled = self._resample(df, period)
+            if not resampled.empty:
+                all_dates = all_dates.union(resampled.index)
+
+        return all_dates.sort_values()
+
+    def _resample(self, df: pd.DataFrame, period: str) -> pd.DataFrame:
+        """주기별 리샘플링"""
+        if df.empty:
+            return df
 
         if period == "Weekly":
-            df = df.resample("W").agg({
+            return df.resample("W").agg({
                 "Open": "first", "High": "max", "Low": "min",
                 "Close": "last", "Volume": "sum",
             }).dropna()
         elif period == "Monthly":
-            df = df.resample("ME").agg({
+            return df.resample("ME").agg({
                 "Open": "first", "High": "max", "Low": "min",
                 "Close": "last", "Volume": "sum",
             }).dropna()
-
         return df
+
+    def _get_display_data(self, ticker: str) -> pd.DataFrame:
+        """특정 종목의 리샘플링된 데이터"""
+        if ticker not in self._price_data_map:
+            return pd.DataFrame()
+        df = self._price_data_map[ticker]
+        period = self.period_combo.currentText()
+        return self._resample(df, period)
 
     # ------------------------------------------------------------------
     # 내부: 그리기
     # ------------------------------------------------------------------
     def _redraw(self):
         """현재 뷰 범위의 차트를 다시 그린다."""
-        df = self._get_display_data()
-        if df.empty:
+        if not self._tickers:
+            return
+
+        combined_idx = self._get_combined_index()
+        if combined_idx.empty:
             return
 
         # 뷰 범위 클램프
-        total = len(df)
+        total = len(combined_idx)
         self._view_start = max(0, min(self._view_start, total - 1))
         end_idx = min(self._view_start + self._view_size, total)
-        view_df = df.iloc[self._view_start:end_idx]
+        view_dates = combined_idx[self._view_start:end_idx]
 
-        if view_df.empty:
+        if view_dates.empty:
             return
 
         style = get_matplotlib_style(self._theme)
+        colors = MULTI_COLORS_DARK if self._theme == "dark" else MULTI_COLORS_LIGHT
 
         self.ax.clear()
         with plt.rc_context(style):
@@ -223,18 +283,67 @@ class PriceChartTab(QWidget):
             self.fig.set_facecolor(style["figure.facecolor"])
 
             chart_type = self.chart_type.currentText()
+            normalize = self.chk_normalize.isChecked()
 
-            if chart_type == "Candlestick":
-                self._draw_candlestick(view_df, style)
+            if len(self._tickers) == 1 and chart_type == "Candlestick":
+                # 단일 종목 캔들스틱
+                ticker = self._tickers[0]
+                df = self._get_display_data(ticker)
+                view_mask = (df.index >= view_dates[0]) & (df.index <= view_dates[-1])
+                view_df = df.loc[view_mask]
+                if not view_df.empty:
+                    self._draw_candlestick(view_df, style)
+                    self.ax.set_title(
+                        f"{ticker} - {self.period_combo.currentText()}",
+                        color=style["text.color"], fontsize=14, fontweight="bold",
+                    )
             else:
-                self._draw_line(view_df, style)
+                # 라인 차트 (다중 종목 지원)
+                for i, ticker in enumerate(self._tickers):
+                    df = self._get_display_data(ticker)
+                    if df.empty:
+                        continue
 
-            self.ax.set_title(
-                f"{self._ticker} - {self.period_combo.currentText()}",
-                color=style["text.color"],
-                fontsize=14,
-                fontweight="bold",
-            )
+                    view_mask = (df.index >= view_dates[0]) & (df.index <= view_dates[-1])
+                    view_df = df.loc[view_mask]
+                    if view_df.empty:
+                        continue
+
+                    color = colors[i % len(colors)]
+                    y_values = view_df["Close"]
+
+                    if normalize and len(y_values) > 0:
+                        base = y_values.iloc[0]
+                        if base > 0:
+                            y_values = (y_values / base) * 100
+
+                    self.ax.plot(
+                        view_df.index, y_values,
+                        color=color, linewidth=1.5,
+                        label=ticker, alpha=0.9,
+                    )
+
+                    if len(self._tickers) == 1:
+                        self.ax.fill_between(view_df.index, y_values, alpha=0.1, color=color)
+
+                title_tickers = " / ".join(self._tickers)
+                suffix = " (Normalized)" if normalize else ""
+                self.ax.set_title(
+                    f"{title_tickers} - {self.period_combo.currentText()}{suffix}",
+                    color=style["text.color"], fontsize=14, fontweight="bold",
+                )
+
+                if normalize:
+                    self.ax.set_ylabel("Normalized (Start=100)", color=style["text.color"])
+                else:
+                    self.ax.set_ylabel("Price (USD)", color=style["text.color"])
+
+                self.ax.legend(
+                    loc="upper left", fontsize=9,
+                    facecolor=style["legend.facecolor"],
+                    edgecolor=style["legend.edgecolor"],
+                )
+
             self.ax.grid(True, alpha=float(style["grid.alpha"]), color=style["grid.color"])
             self.ax.tick_params(colors=style["xtick.color"])
 
@@ -284,26 +393,17 @@ class PriceChartTab(QWidget):
         margin = (df["High"].max() - df["Low"].min()) * 0.05
         self.ax.set_ylim(df["Low"].min() - margin, df["High"].max() + margin)
 
-    def _draw_line(self, df: pd.DataFrame, style: dict):
-        """라인 차트 그리기"""
-        line_color = "#89b4fa" if self._theme == "dark" else "#1e66f5"
-        self.ax.plot(df.index, df["Close"], color=line_color, linewidth=1.5, label="Close")
-        self.ax.fill_between(df.index, df["Close"], alpha=0.1, color=line_color)
-        self.ax.legend(loc="upper left")
-
     # ------------------------------------------------------------------
     # 내부: 스크롤/줌/기간 선택
     # ------------------------------------------------------------------
     def _scroll(self, ratio: float):
-        """ratio만큼 뷰를 이동 (0.5 = 뷰 크기의 절반)"""
         step = int(self._view_size * ratio)
-        total = len(self._get_display_data())
+        total = len(self._get_combined_index())
         self._view_start = max(0, min(self._view_start + step, total - self._view_size))
         self._redraw()
 
     def _zoom(self, factor: float):
-        """factor로 뷰 크기를 조절 (0.5 = 축소/확대, 2.0 = 확대/축소)"""
-        total = len(self._get_display_data())
+        total = len(self._get_combined_index())
         center = self._view_start + self._view_size // 2
         new_size = max(20, min(int(self._view_size * factor), total))
         self._view_size = new_size
@@ -311,29 +411,26 @@ class PriceChartTab(QWidget):
         self._redraw()
 
     def _show_all(self):
-        """전체 데이터 표시"""
-        total = len(self._get_display_data())
+        total = len(self._get_combined_index())
         self._view_start = 0
         self._view_size = total
         self._redraw()
 
     def _on_range_go(self):
-        """기간 선택 Go 버튼"""
-        df = self._get_display_data()
-        if df.empty:
+        combined_idx = self._get_combined_index()
+        if combined_idx.empty:
             return
 
         start = pd.Timestamp(self.range_start.date().toPyDate())
         end = pd.Timestamp(self.range_end.date().toPyDate())
 
-        # 해당 범위의 인덱스 찾기
-        mask = (df.index >= start) & (df.index <= end)
-        filtered = df.loc[mask]
+        mask = (combined_idx >= start) & (combined_idx <= end)
+        filtered = combined_idx[mask]
         if filtered.empty:
             return
 
-        first_idx = df.index.get_loc(filtered.index[0])
-        last_idx = df.index.get_loc(filtered.index[-1])
+        first_idx = combined_idx.get_loc(filtered[0])
+        last_idx = combined_idx.get_loc(filtered[-1])
 
         if isinstance(first_idx, slice):
             first_idx = first_idx.start
@@ -345,8 +442,7 @@ class PriceChartTab(QWidget):
         self._redraw()
 
     def _on_period_changed(self):
-        """봉 주기 변경 시 뷰 리셋"""
-        total = len(self._get_display_data())
+        total = len(self._get_combined_index())
         self._view_size = min(252, total)
         self._view_start = max(0, total - self._view_size)
         self._redraw()
