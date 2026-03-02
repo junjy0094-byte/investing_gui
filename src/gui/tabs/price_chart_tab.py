@@ -88,7 +88,7 @@ class PriceChartTab(QWidget):
         ctrl_layout.addWidget(self.range_end)
 
         go_btn = QPushButton("Go")
-        go_btn.setFixedWidth(50)
+        go_btn.setFixedWidth(56)
         go_btn.clicked.connect(self._on_range_go)
         ctrl_layout.addWidget(go_btn)
 
@@ -96,29 +96,29 @@ class PriceChartTab(QWidget):
 
         # 스크롤/줌 버튼
         btn_left = QPushButton("<<")
-        btn_left.setFixedWidth(36)
+        btn_left.setFixedWidth(44)
         btn_left.setToolTip("이전 기간으로 스크롤")
         btn_left.clicked.connect(lambda: self._scroll(-0.5))
         ctrl_layout.addWidget(btn_left)
 
         btn_right = QPushButton(">>")
-        btn_right.setFixedWidth(36)
+        btn_right.setFixedWidth(44)
         btn_right.setToolTip("다음 기간으로 스크롤")
         btn_right.clicked.connect(lambda: self._scroll(0.5))
         ctrl_layout.addWidget(btn_right)
 
         btn_zin = QPushButton("Zoom +")
-        btn_zin.setFixedWidth(64)
+        btn_zin.setFixedWidth(80)
         btn_zin.clicked.connect(lambda: self._zoom(0.5))
         ctrl_layout.addWidget(btn_zin)
 
         btn_zout = QPushButton("Zoom -")
-        btn_zout.setFixedWidth(64)
+        btn_zout.setFixedWidth(80)
         btn_zout.clicked.connect(lambda: self._zoom(2.0))
         ctrl_layout.addWidget(btn_zout)
 
         btn_all = QPushButton("All")
-        btn_all.setFixedWidth(40)
+        btn_all.setFixedWidth(52)
         btn_all.setToolTip("전체 기간 표시")
         btn_all.clicked.connect(self._show_all)
         ctrl_layout.addWidget(btn_all)
