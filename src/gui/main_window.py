@@ -1,7 +1,7 @@
 """
 메인 윈도우
 - 좌측 패널 + 우측 탭 + 하단 로그 + 프로그래스바 조립
-- 백테스트 실행 워커 스레드 관리
+- 백테스트 실행 워커 스레드 관리 (포트폴리오 지원)
 - 테마 토글
 - CSV 저장 기능
 """
@@ -9,7 +9,7 @@
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import pandas as pd
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QObject
@@ -30,7 +30,11 @@ from PyQt6.QtWidgets import (
 )
 
 from src.data.data_manager import DataManager
-from src.engine.backtest_engine import BacktestEngine, BacktestResult
+from src.engine.backtest_engine import (
+    BacktestEngine,
+    BacktestResult,
+    PortfolioBacktestResult,
+)
 from src.strategies.pure_dca import PureDCAStrategy
 from src.utils.config_manager import ConfigManager
 from src.gui.left_panel import LeftPanel
@@ -61,12 +65,12 @@ class QTextEditLogHandler(logging.Handler):
 
 
 # ======================================================================
-# 백테스트 워커 스레드
+# 백테스트 워커 스레드 (포트폴리오 지원)
 # ======================================================================
 class BacktestWorker(QObject):
-    """별도 스레드에서 백테스트를 실행하는 워커"""
+    """별도 스레드에서 포트폴리오 백테스트를 실행하는 워커"""
 
-    finished = pyqtSignal(object)   # BacktestResult 또는 None
+    finished = pyqtSignal(object)   # PortfolioBacktestResult 또는 None
     progress = pyqtSignal(int)      # 진행률 (0~100)
     error = pyqtSignal(str)         # 에러 메시지
 
@@ -84,21 +88,34 @@ class BacktestWorker(QObject):
     def run(self):
         try:
             p = self.params
+            portfolio = p.get("portfolio", [])
             self.progress.emit(5)
 
-            # 1) 주가 데이터 다운로드
-            logger.info(f"데이터 다운로드 시작: {p['ticker']}")
-            price_data = self.data_manager.get_price_data(
-                ticker=p["ticker"],
-                start=p["start_date"],
-                end=p["end_date"],
-            )
-            self.progress.emit(25)
-
-            if price_data.empty:
-                self.error.emit(f"데이터를 가져올 수 없습니다: {p['ticker']}")
+            if not portfolio:
+                self.error.emit("포트폴리오에 종목이 없습니다.")
                 self.finished.emit(None)
                 return
+
+            tickers = [item["ticker"] for item in portfolio]
+            ticker_str = ", ".join(tickers)
+
+            # 1) 각 종목 주가 데이터 다운로드
+            price_data_map: dict[str, pd.DataFrame] = {}
+            progress_per_ticker = 30 / len(tickers)
+
+            for i, ticker in enumerate(tickers):
+                logger.info(f"데이터 다운로드: {ticker} ({i+1}/{len(tickers)})")
+                price_data = self.data_manager.get_price_data(
+                    ticker=ticker,
+                    start=p["start_date"],
+                    end=p["end_date"],
+                )
+                if price_data.empty:
+                    self.error.emit(f"데이터를 가져올 수 없습니다: {ticker}")
+                    self.finished.emit(None)
+                    return
+                price_data_map[ticker] = price_data
+                self.progress.emit(int(5 + (i + 1) * progress_per_ticker))
 
             # 2) USD/KRW 환율 데이터 다운로드
             logger.info("USD/KRW 환율 데이터 다운로드 중...")
@@ -106,7 +123,7 @@ class BacktestWorker(QObject):
                 start=p["start_date"],
                 end=p["end_date"],
             )
-            self.progress.emit(40)
+            self.progress.emit(45)
 
             # 3) 현재 환율 조회
             current_rate = self.data_manager.get_current_exchange_rate()
@@ -117,15 +134,15 @@ class BacktestWorker(QObject):
             if strategy_name == "Pure DCA":
                 strategy = PureDCAStrategy()
             else:
-                strategy = PureDCAStrategy()  # 기본값
+                strategy = PureDCAStrategy()
 
             self.progress.emit(55)
 
-            # 5) 백테스트 실행
-            logger.info("백테스트 실행 중...")
-            result = self.engine.run(
-                ticker=p["ticker"],
-                price_data=price_data,
+            # 5) 포트폴리오 백테스트 실행
+            logger.info(f"포트폴리오 백테스트 실행 중: {ticker_str}")
+            result = self.engine.run_portfolio(
+                portfolio=portfolio,
+                price_data_map=price_data_map,
                 strategy=strategy,
                 buy_day=p["buy_day"],
                 monthly_amount=p["monthly_amount"],
@@ -167,7 +184,7 @@ class MainWindow(QMainWindow):
         # 현재 테마
         self._theme = self.config_manager.get("theme", "dark")
         # 현재 백테스트 결과
-        self._current_result: Optional[BacktestResult] = None
+        self._current_result: Optional[PortfolioBacktestResult] = None
         # 워커 스레드
         self._worker_thread: Optional[QThread] = None
 
@@ -175,7 +192,7 @@ class MainWindow(QMainWindow):
         self._setup_logging()
         self._apply_theme()
 
-        logger.info("앱이 시작되었습니다. 설정을 입력하고 Run Backtest를 누르세요.")
+        logger.info("앱이 시작되었습니다. 포트폴리오를 설정하고 Run Backtest를 누르세요.")
 
     def _init_ui(self):
         self.setWindowTitle("Stock DCA Backtester")
@@ -202,8 +219,8 @@ class MainWindow(QMainWindow):
 
         # 좌측 패널
         self.left_panel = LeftPanel(config)
-        self.left_panel.setMinimumWidth(280)
-        self.left_panel.setMaximumWidth(400)
+        self.left_panel.setMinimumWidth(320)
+        self.left_panel.setMaximumWidth(480)
         self.left_panel.run_requested.connect(self._on_run_backtest)
         self.left_panel.chart_requested.connect(self._on_load_chart)
         self.left_panel.save_btn.clicked.connect(self._on_save_csv)
@@ -235,7 +252,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.log_text, 1)
 
         splitter.addWidget(right_widget)
-        splitter.setSizes([300, 1300])
+        splitter.setSizes([360, 1240])
 
         main_layout.addWidget(splitter)
 
@@ -271,30 +288,34 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     @pyqtSlot(dict)
     def _on_load_chart(self, params: dict):
-        """주가 차트 로드"""
-        ticker = params["ticker"]
-        if not ticker:
+        """주가 차트 로드 (포트폴리오 전체)"""
+        portfolio = params.get("portfolio", [])
+        if not portfolio:
             return
 
-        self.statusBar().showMessage(f"Loading {ticker}...")
+        tickers = [item["ticker"] for item in portfolio]
+        ticker_str = ", ".join(tickers)
+        self.statusBar().showMessage(f"Loading {ticker_str}...")
         self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(20)
+        self.progress_bar.setValue(10)
 
         try:
-            price_data = self.data_manager.get_price_data(
-                ticker=ticker,
-                start=params["start_date"],
-                end=params["end_date"],
-            )
-            self.progress_bar.setValue(80)
+            price_data_map: dict[str, pd.DataFrame] = {}
+            for i, ticker in enumerate(tickers):
+                price_data = self.data_manager.get_price_data(
+                    ticker=ticker,
+                    start=params["start_date"],
+                    end=params["end_date"],
+                )
+                if price_data.empty:
+                    QMessageBox.warning(self, "Error", f"No data found for {ticker}")
+                    return
+                price_data_map[ticker] = price_data
+                self.progress_bar.setValue(int(10 + (i + 1) * 70 / len(tickers)))
 
-            if price_data.empty:
-                QMessageBox.warning(self, "Error", f"No data found for {ticker}")
-                return
-
-            self.price_chart_tab.set_data(ticker, price_data)
+            self.price_chart_tab.set_multi_data(price_data_map)
             self.tabs.setCurrentIndex(0)
-            logger.info(f"주가 차트 로드 완료: {ticker} ({len(price_data)}행)")
+            logger.info(f"주가 차트 로드 완료: {ticker_str}")
 
         except Exception as e:
             logger.error(f"차트 로드 에러: {e}")
@@ -306,18 +327,30 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(dict)
     def _on_run_backtest(self, params: dict):
-        """백테스트 실행 (워커 스레드)"""
+        """포트폴리오 백테스트 실행 (워커 스레드)"""
         if self._worker_thread and self._worker_thread.isRunning():
             logger.warning("이미 백테스트가 실행 중입니다.")
+            return
+
+        # 비율 합계 검증
+        portfolio = params.get("portfolio", [])
+        total_ratio = sum(item["ratio"] for item in portfolio)
+        if abs(total_ratio - 100) > 0.1:
+            QMessageBox.warning(
+                self, "Warning",
+                f"포트폴리오 비율 합계가 100%가 아닙니다 ({total_ratio:.0f}%).\n"
+                "비율을 조정해주세요."
+            )
             return
 
         # 설정 저장
         self.config_manager.update(params)
 
+        tickers = [item["ticker"] for item in portfolio]
         self.left_panel.set_running(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        self.statusBar().showMessage(f"Running backtest: {params['ticker']}...")
+        self.statusBar().showMessage(f"Running backtest: {', '.join(tickers)}...")
 
         # 워커 생성 및 스레드 시작
         self._worker_thread = QThread()
@@ -341,7 +374,7 @@ class MainWindow(QMainWindow):
         logger.error(f"백테스트 에러: {msg}")
 
     @pyqtSlot(object)
-    def _on_backtest_done(self, result: Optional[BacktestResult]):
+    def _on_backtest_done(self, result: Optional[PortfolioBacktestResult]):
         """백테스트 완료 콜백"""
         self.left_panel.set_running(False)
         self.progress_bar.setValue(100)
@@ -354,18 +387,26 @@ class MainWindow(QMainWindow):
 
         self._current_result = result
 
-        # 주가 차트 탭에도 데이터 반영
-        self.price_chart_tab.set_data(result.ticker, result.daily_data)
+        # 주가 차트 탭에 모든 종목 데이터 반영
+        price_data_map = {}
+        for ticker, r in result.per_ticker_results.items():
+            price_data_map[ticker] = r.daily_data
+        self.price_chart_tab.set_multi_data(price_data_map)
 
         # 백테스트 결과 차트 표시
-        self.backtest_chart_tab.set_result(result)
+        self.backtest_chart_tab.set_portfolio_result(result)
         self.tabs.setCurrentIndex(1)
 
         # CSV 저장 버튼 활성화
         self.left_panel.save_btn.setEnabled(True)
 
+        tickers_str = " + ".join(
+            f"{item['ticker']}({item['ratio']}%)"
+            for item in result.portfolio
+            if item['ticker'] in result.per_ticker_results
+        )
         self.statusBar().showMessage(
-            f"Backtest complete: {result.ticker} | "
+            f"Backtest complete: {tickers_str} | "
             f"Return: {result.total_return_pct:+.1f}% | "
             f"Profit: ₩{result.total_profit_krw:,.0f} | "
             f"Rate: ₩{result.current_exchange_rate:,.0f}/USD"
@@ -376,8 +417,12 @@ class MainWindow(QMainWindow):
         if self._current_result is None:
             return
 
+        tickers_str = "_".join(
+            item["ticker"] for item in self._current_result.portfolio
+            if item["ticker"] in self._current_result.per_ticker_results
+        )
         default_name = (
-            f"backtest_{self._current_result.ticker}_"
+            f"backtest_{tickers_str}_"
             f"{self._current_result.strategy_name.replace(' ', '_')}_"
             f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         )
@@ -391,17 +436,7 @@ class MainWindow(QMainWindow):
 
         try:
             df = self._current_result.daily_data.copy()
-            save_cols = [
-                "Open", "High", "Low", "Close", "Volume",
-                "Exchange_Rate",
-                "Buy_Flag", "Buy_Amount_KRW", "Buy_Amount_USD",
-                "Shares_Bought", "Shares_Held",
-                "Total_Invested_KRW", "Total_Invested_USD",
-                "Portfolio_Value_USD", "Portfolio_Value_KRW",
-                "Profit_USD", "Profit_KRW", "Return_Pct",
-            ]
-            existing = [c for c in save_cols if c in df.columns]
-            df[existing].to_csv(file_path)
+            df.to_csv(file_path)
             logger.info(f"결과 저장 완료: {file_path}")
             self.statusBar().showMessage(f"Saved: {file_path}")
         except Exception as e:

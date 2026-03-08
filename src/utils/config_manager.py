@@ -18,6 +18,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # 기본 설정값
 DEFAULT_CONFIG = {
     "ticker": "QQQ",
+    "portfolio": [{"ticker": "QQQ", "ratio": 50}, {"ticker": "VOO", "ratio": 50}],
     "start_date": "2020-01-01",
     "end_date": "2025-12-31",
     "buy_frequency": "monthly",  # 'monthly' 또는 'weekly'
