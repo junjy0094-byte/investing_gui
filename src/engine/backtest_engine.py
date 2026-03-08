@@ -41,6 +41,10 @@ class BacktestResult:
     current_exchange_rate: float    # 현재 환율 (최종 평가 시 사용)
     # 포트폴리오 내 비율
     allocation_pct: float = 100.0   # 포트폴리오 내 할당 비율
+    # 배당 관련
+    total_dividend_usd: float = 0.0      # 누적 배당금 (USD)
+    total_dividend_krw: float = 0.0      # 누적 배당금 (KRW)
+    dividend_reinvest_shares: float = 0.0  # 배당 재투자로 매수한 주수
 
 
 @dataclass
@@ -62,6 +66,9 @@ class PortfolioBacktestResult:
     max_drawdown_pct: float
     num_buys: int
     current_exchange_rate: float
+    # 배당 관련
+    total_dividend_usd: float = 0.0
+    total_dividend_krw: float = 0.0
 
 
 class BacktestEngine:
@@ -90,6 +97,7 @@ class BacktestEngine:
         buy_frequency: str = "monthly",
         buy_weekday: int = 0,
         allocation_pct: float = 100.0,
+        dividend_data: Optional[pd.DataFrame] = None,
     ) -> Optional[BacktestResult]:
         """
         단일 종목 백테스트 실행.
@@ -127,7 +135,7 @@ class BacktestEngine:
             # 3) 일별 시뮬레이션
             daily_data = self._simulate(
                 price_data, signal_map, start_date, end_date,
-                exchange_rate_data,
+                exchange_rate_data, dividend_data,
             )
 
             if daily_data.empty:
@@ -159,6 +167,7 @@ class BacktestEngine:
         current_exchange_rate: float = 1350.0,
         buy_frequency: str = "monthly",
         buy_weekday: int = 0,
+        dividend_data_map: Optional[dict[str, pd.DataFrame]] = None,
     ) -> Optional[PortfolioBacktestResult]:
         """
         다중 종목 포트폴리오 백테스트 실행.
@@ -180,6 +189,10 @@ class BacktestEngine:
                     logger.error(f"[{ticker}] 주가 데이터가 없습니다.")
                     continue
 
+                div_data = None
+                if dividend_data_map:
+                    div_data = dividend_data_map.get(ticker)
+
                 result = self.run(
                     ticker=ticker,
                     price_data=price_data,
@@ -195,6 +208,7 @@ class BacktestEngine:
                     buy_frequency=buy_frequency,
                     buy_weekday=buy_weekday,
                     allocation_pct=ratio,
+                    dividend_data=div_data,
                 )
 
                 if result is not None:
@@ -222,8 +236,9 @@ class BacktestEngine:
         start_date: str,
         end_date: str,
         exchange_rate_data: Optional[pd.DataFrame] = None,
+        dividend_data: Optional[pd.DataFrame] = None,
     ) -> pd.DataFrame:
-        """일별 포트폴리오 시뮬레이션 (KRW→USD 환전 포함)"""
+        """일별 포트폴리오 시뮬레이션 (KRW→USD 환전 + 배당 재투자 포함)"""
         start_dt = pd.Timestamp(start_date)
         end_dt = pd.Timestamp(end_date)
 
@@ -245,6 +260,12 @@ class BacktestEngine:
             fx = pd.Series(1350.0, index=df.index)
             logger.warning("환율 데이터 없음 - 기본 환율 1350.0 사용")
 
+        # 배당 데이터를 날짜별 딕셔너리로 변환
+        div_map: dict[pd.Timestamp, float] = {}
+        if dividend_data is not None and not dividend_data.empty:
+            for div_date, div_row in dividend_data.iterrows():
+                div_map[div_date] = div_row["Dividend"]
+
         # 시뮬레이션 컬럼 초기화
         n = len(df)
         shares_held = np.zeros(n)
@@ -255,15 +276,23 @@ class BacktestEngine:
         buy_amount_usd = np.zeros(n)
         shares_bought = np.zeros(n)
         exchange_rates = fx.values.copy()
+        # 배당 관련
+        dividend_per_day_usd = np.zeros(n)
+        dividend_reinvest_shares_arr = np.zeros(n)
+        cum_dividend_usd = np.zeros(n)
+        cum_dividend_krw = np.zeros(n)
 
         cum_shares = 0.0
         cum_invested_krw = 0.0
         cum_invested_usd = 0.0
+        cum_div_usd = 0.0
+        cum_div_krw = 0.0
 
         for i, (date, row) in enumerate(df.iterrows()):
             close_price = row["Close"]
             rate = exchange_rates[i]
 
+            # DCA 매수 처리
             if date in signal_map:
                 sig = signal_map[date]
                 if sig.action == "BUY" and close_price > 0 and rate > 0:
@@ -282,9 +311,27 @@ class BacktestEngine:
                     buy_amount_usd[i] = usd_amt
                     shares_bought[i] = new_shares
 
+            # 배당 재투자 처리
+            if date in div_map and cum_shares > 0 and close_price > 0:
+                div_per_share = div_map[date]
+                div_total_usd = div_per_share * cum_shares
+                div_total_krw = div_total_usd * rate
+
+                # 배당금으로 주식 재매수 (DRIP)
+                reinvest_shares = div_total_usd / close_price
+                cum_shares += reinvest_shares
+
+                cum_div_usd += div_total_usd
+                cum_div_krw += div_total_krw
+
+                dividend_per_day_usd[i] = div_total_usd
+                dividend_reinvest_shares_arr[i] = reinvest_shares
+
             shares_held[i] = cum_shares
             total_invested_krw[i] = cum_invested_krw
             total_invested_usd[i] = cum_invested_usd
+            cum_dividend_usd[i] = cum_div_usd
+            cum_dividend_krw[i] = cum_div_krw
 
         # 결과 DataFrame 구성
         df["Exchange_Rate"] = exchange_rates
@@ -304,6 +351,11 @@ class BacktestEngine:
             (df["Profit_KRW"] / df["Total_Invested_KRW"]) * 100,
             0.0,
         )
+        # 배당 관련 컬럼
+        df["Dividend_USD"] = dividend_per_day_usd
+        df["Dividend_Reinvest_Shares"] = dividend_reinvest_shares_arr
+        df["Cum_Dividend_USD"] = cum_dividend_usd
+        df["Cum_Dividend_KRW"] = cum_dividend_krw
 
         return df
 
@@ -337,6 +389,11 @@ class BacktestEngine:
             else 0.0
         )
 
+        # 배당 관련
+        total_dividend_usd = float(last.get("Cum_Dividend_USD", 0))
+        total_dividend_krw = float(last.get("Cum_Dividend_KRW", 0))
+        dividend_reinvest_shares = float(daily_data["Dividend_Reinvest_Shares"].sum()) if "Dividend_Reinvest_Shares" in daily_data.columns else 0.0
+
         num_buys = int(daily_data["Buy_Flag"].sum())
         avg_buy_price = total_invested_usd / total_shares if total_shares > 0 else 0
 
@@ -364,12 +421,19 @@ class BacktestEngine:
             total_profit_krw=round(total_profit_krw, 0),
             current_exchange_rate=round(current_exchange_rate, 2),
             allocation_pct=allocation_pct,
+            total_dividend_usd=round(total_dividend_usd, 2),
+            total_dividend_krw=round(total_dividend_krw, 0),
+            dividend_reinvest_shares=round(dividend_reinvest_shares, 6),
         )
+
+        div_info = ""
+        if total_dividend_usd > 0:
+            div_info = f" | 배당: ${total_dividend_usd:,.2f} (재투자 {dividend_reinvest_shares:.4f}주)"
 
         logger.info(
             f"[백테스트 완료] {ticker} ({allocation_pct:.0f}%) | {strategy_name} | "
             f"투자: ₩{total_invested_krw:,.0f} → 자산: ₩{final_value_krw:,.0f} | "
-            f"수익률: {total_return_pct:.1f}% | MDD: {max_drawdown_pct:.1f}%"
+            f"수익률: {total_return_pct:.1f}% | MDD: {max_drawdown_pct:.1f}%{div_info}"
         )
         return result
 
@@ -402,6 +466,8 @@ class BacktestEngine:
         total_invested_krw = pd.Series(0.0, index=all_dates)
         total_invested_usd = pd.Series(0.0, index=all_dates)
         total_buy_flag = pd.Series(0, index=all_dates, dtype=int)
+        total_cum_div_usd = pd.Series(0.0, index=all_dates)
+        total_cum_div_krw = pd.Series(0.0, index=all_dates)
 
         for ticker, result in per_ticker_results.items():
             df = result.daily_data
@@ -411,6 +477,13 @@ class BacktestEngine:
             inv_krw = df["Total_Invested_KRW"].reindex(all_dates, method="ffill").fillna(0)
             inv_usd = df["Total_Invested_USD"].reindex(all_dates, method="ffill").fillna(0)
             buy_f = df["Buy_Flag"].reindex(all_dates).fillna(0).astype(int)
+
+            # 배당 데이터 통합
+            if "Cum_Dividend_USD" in df.columns:
+                cd_usd = df["Cum_Dividend_USD"].reindex(all_dates, method="ffill").fillna(0)
+                cd_krw = df["Cum_Dividend_KRW"].reindex(all_dates, method="ffill").fillna(0)
+                total_cum_div_usd += cd_usd
+                total_cum_div_krw += cd_krw
 
             # 각 종목의 Close 가격 저장 (가격 차트용)
             combined[f"Close_{ticker}"] = df["Close"].reindex(all_dates, method="ffill")
@@ -433,6 +506,8 @@ class BacktestEngine:
             0.0,
         )
         combined["Buy_Flag"] = total_buy_flag
+        combined["Cum_Dividend_USD"] = total_cum_div_usd
+        combined["Cum_Dividend_KRW"] = total_cum_div_krw
 
         # 환율 (첫 번째 종목에서 가져오기)
         first_result = next(iter(per_ticker_results.values()))
@@ -462,6 +537,8 @@ class BacktestEngine:
         max_drawdown_pct = abs(drawdown.min())
 
         num_buys = sum(r.num_buys for r in per_ticker_results.values())
+        portfolio_div_usd = sum(r.total_dividend_usd for r in per_ticker_results.values())
+        portfolio_div_krw = sum(r.total_dividend_krw for r in per_ticker_results.values())
 
         tickers_str = " + ".join(
             f"{item['ticker']}({item['ratio']}%)" for item in portfolio
@@ -488,4 +565,6 @@ class BacktestEngine:
             max_drawdown_pct=round(max_drawdown_pct, 2),
             num_buys=num_buys,
             current_exchange_rate=round(current_exchange_rate, 2),
+            total_dividend_usd=round(portfolio_div_usd, 2),
+            total_dividend_krw=round(portfolio_div_krw, 0),
         )

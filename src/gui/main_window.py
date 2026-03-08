@@ -117,7 +117,20 @@ class BacktestWorker(QObject):
                 price_data_map[ticker] = price_data
                 self.progress.emit(int(5 + (i + 1) * progress_per_ticker))
 
-            # 2) USD/KRW 환율 데이터 다운로드
+            # 2) 각 종목 배당 데이터 다운로드
+            dividend_data_map: dict[str, pd.DataFrame] = {}
+            for ticker in tickers:
+                logger.info(f"배당 데이터 다운로드: {ticker}")
+                div_data = self.data_manager.get_dividend_data(
+                    ticker=ticker,
+                    start=p["start_date"],
+                    end=p["end_date"],
+                )
+                if not div_data.empty:
+                    dividend_data_map[ticker] = div_data
+            self.progress.emit(40)
+
+            # 3) USD/KRW 환율 데이터 다운로드
             logger.info("USD/KRW 환율 데이터 다운로드 중...")
             exchange_rate_data = self.data_manager.get_exchange_rate_data(
                 start=p["start_date"],
@@ -154,6 +167,7 @@ class BacktestWorker(QObject):
                 current_exchange_rate=current_rate,
                 buy_frequency=p.get("buy_frequency", "monthly"),
                 buy_weekday=p.get("buy_weekday", 0),
+                dividend_data_map=dividend_data_map if dividend_data_map else None,
             )
             self.progress.emit(90)
 

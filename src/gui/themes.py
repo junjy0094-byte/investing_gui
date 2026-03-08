@@ -18,26 +18,28 @@ QMainWindow, QWidget {
 /* 그룹박스 */
 QGroupBox {
     border: 1px solid #45475a;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding-top: 16px;
+    border-radius: 6px;
+    margin-top: 8px;
+    padding-top: 12px;
     font-weight: bold;
+    font-size: 11px;
     color: #89b4fa;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
+    left: 8px;
+    padding: 0 4px;
 }
 
 /* 입력 필드 */
 QLineEdit, QSpinBox, QDoubleSpinBox, QDateEdit, QComboBox {
     background-color: #313244;
     border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 6px 10px;
+    border-radius: 4px;
+    padding: 2px 6px;
     color: #cdd6f4;
-    min-height: 28px;
+    min-height: 18px;
+    font-size: 11px;
 }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QComboBox:focus {
     border: 1px solid #89b4fa;
@@ -100,10 +102,11 @@ QPushButton {
     background-color: #89b4fa;
     color: #1e1e2e;
     border: none;
-    border-radius: 6px;
-    padding: 6px 12px;
+    border-radius: 4px;
+    padding: 3px 8px;
     font-weight: bold;
-    min-height: 32px;
+    min-height: 22px;
+    font-size: 11px;
 }
 QPushButton:hover {
     background-color: #74c7ec;
@@ -119,9 +122,9 @@ QPushButton:disabled {
 QPushButton#runButton {
     background-color: #a6e3a1;
     color: #1e1e2e;
-    font-size: 15px;
-    min-height: 40px;
-    padding: 8px 16px;
+    font-size: 12px;
+    min-height: 28px;
+    padding: 3px 10px;
 }
 QPushButton#runButton:hover {
     background-color: #94e2d5;
@@ -129,7 +132,7 @@ QPushButton#runButton:hover {
 QPushButton#saveButton {
     background-color: #f9e2af;
     color: #1e1e2e;
-    padding: 8px 16px;
+    padding: 3px 10px;
 }
 
 /* 탭 위젯 */
@@ -255,9 +258,10 @@ QScrollArea {
 /* 레이블 */
 QLabel {
     color: #cdd6f4;
+    font-size: 11px;
 }
 QLabel#titleLabel {
-    font-size: 18px;
+    font-size: 13px;
     font-weight: bold;
     color: #89b4fa;
 }
@@ -297,25 +301,27 @@ QMainWindow, QWidget {
 
 QGroupBox {
     border: 1px solid #ccd0da;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding-top: 16px;
+    border-radius: 6px;
+    margin-top: 8px;
+    padding-top: 12px;
     font-weight: bold;
+    font-size: 11px;
     color: #1e66f5;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
+    left: 8px;
+    padding: 0 4px;
 }
 
 QLineEdit, QSpinBox, QDoubleSpinBox, QDateEdit, QComboBox {
     background-color: #ffffff;
     border: 1px solid #ccd0da;
-    border-radius: 6px;
-    padding: 6px 10px;
+    border-radius: 4px;
+    padding: 2px 6px;
     color: #4c4f69;
-    min-height: 28px;
+    min-height: 18px;
+    font-size: 11px;
 }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QComboBox:focus {
     border: 1px solid #1e66f5;
@@ -377,10 +383,11 @@ QPushButton {
     background-color: #1e66f5;
     color: #ffffff;
     border: none;
-    border-radius: 6px;
-    padding: 6px 12px;
+    border-radius: 4px;
+    padding: 3px 8px;
     font-weight: bold;
-    min-height: 32px;
+    min-height: 22px;
+    font-size: 11px;
 }
 QPushButton:hover {
     background-color: #2a7de1;
@@ -396,9 +403,9 @@ QPushButton:disabled {
 QPushButton#runButton {
     background-color: #40a02b;
     color: #ffffff;
-    font-size: 15px;
-    min-height: 40px;
-    padding: 8px 16px;
+    font-size: 12px;
+    min-height: 28px;
+    padding: 3px 10px;
 }
 QPushButton#runButton:hover {
     background-color: #36a31e;
@@ -406,7 +413,7 @@ QPushButton#runButton:hover {
 QPushButton#saveButton {
     background-color: #df8e1d;
     color: #ffffff;
-    padding: 8px 16px;
+    padding: 3px 10px;
 }
 
 QTabWidget::pane {
@@ -527,9 +534,10 @@ QScrollArea {
 
 QLabel {
     color: #4c4f69;
+    font-size: 11px;
 }
 QLabel#titleLabel {
-    font-size: 18px;
+    font-size: 13px;
     font-weight: bold;
     color: #1e66f5;
 }

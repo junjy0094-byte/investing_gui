@@ -184,9 +184,12 @@ class BacktestChartTab(QWidget):
             ratio = item["ratio"]
             if ticker in r.per_ticker_results:
                 tr = r.per_ticker_results[ticker]
+                div_part = ""
+                if tr.total_dividend_usd > 0:
+                    div_part = f" [Div: ${tr.total_dividend_usd:,.2f}]"
                 portfolio_parts.append(
                     f"{ticker}({ratio:.0f}%): "
-                    f"₩{tr.total_profit_krw:,.0f} ({tr.total_return_pct:+.1f}%)"
+                    f"₩{tr.total_profit_krw:,.0f} ({tr.total_return_pct:+.1f}%){div_part}"
                 )
 
         portfolio_str = " | ".join(portfolio_parts)
@@ -196,6 +199,14 @@ class BacktestChartTab(QWidget):
             for item in r.portfolio
             if item['ticker'] in r.per_ticker_results
         )
+
+        # 배당 정보
+        div_str = ""
+        if r.total_dividend_usd > 0:
+            div_str = (
+                f" | Dividend: <b>${r.total_dividend_usd:,.2f}</b>"
+                f" (₩{r.total_dividend_krw:,.0f}) [DRIP]"
+            )
 
         self.summary_label.setText(
             f"<b>{tickers_str}</b> | Strategy: {r.strategy_name} | "
@@ -207,7 +218,7 @@ class BacktestChartTab(QWidget):
             f"<span style='{color_profit}'>"
             f"Profit: ₩{r.total_profit_krw:,.0f} "
             f"({r.total_return_pct:+.1f}%)</span> | "
-            f"MDD: {r.max_drawdown_pct:.1f}% | "
+            f"MDD: {r.max_drawdown_pct:.1f}%{div_str} | "
             f"Rate: ₩{r.current_exchange_rate:,.0f}/USD<br>"
             f"<small>{portfolio_str}</small>"
         )
@@ -233,6 +244,10 @@ class BacktestChartTab(QWidget):
                 "Return_Pct": "last",
                 "Buy_Flag": "max",
             }
+            if "Cum_Dividend_USD" in df.columns:
+                agg["Cum_Dividend_USD"] = "last"
+            if "Cum_Dividend_KRW" in df.columns:
+                agg["Cum_Dividend_KRW"] = "last"
 
             # 개별 종목 Close 컬럼 추가
             for col in df.columns:

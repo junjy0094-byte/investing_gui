@@ -45,8 +45,9 @@ class TickerSearchWidget(QWidget):
         layout.setSpacing(4)
 
         self.input = QLineEdit()
-        self.input.setPlaceholderText("티커 또는 종목명 검색 (예: QQQ, Apple)")
+        self.input.setPlaceholderText("티커/종목명 (예: QQQ)")
         self.input.setToolTip("티커 심볼 또는 종목명을 입력하면 자동완성됩니다")
+        self.input.setFixedHeight(22)
 
         # 자동완성 설정
         self._all_items = [get_display_text(t, n) for t, n in TICKER_DATABASE]
@@ -99,8 +100,8 @@ class PortfolioRow(QWidget):
     def __init__(self, ticker: str = "", ratio: float = 100.0, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 2, 0, 2)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
         # 티커 검색 위젯
         self.ticker_widget = TickerSearchWidget()
@@ -112,15 +113,17 @@ class PortfolioRow(QWidget):
         self.ratio_spin = QDoubleSpinBox()
         self.ratio_spin.setRange(1, 100)
         self.ratio_spin.setSingleStep(5)
-        self.ratio_spin.setSuffix(" %")
+        self.ratio_spin.setSuffix("%")
         self.ratio_spin.setDecimals(0)
         self.ratio_spin.setValue(ratio)
-        self.ratio_spin.setFixedWidth(85)
+        self.ratio_spin.setFixedWidth(65)
+        self.ratio_spin.setFixedHeight(22)
         layout.addWidget(self.ratio_spin, 0)
 
         # 삭제 버튼
         self.remove_btn = QPushButton("✕")
-        self.remove_btn.setFixedSize(28, 28)
+        self.remove_btn.setFixedSize(22, 22)
+        self.remove_btn.setStyleSheet("font-size: 10px; padding: 0px; min-height: 18px;")
         self.remove_btn.setToolTip("이 종목 제거")
         self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
         layout.addWidget(self.remove_btn, 0)
@@ -152,134 +155,151 @@ class LeftPanel(QWidget):
         self._load_config(config)
 
     def _init_ui(self):
-        # 스크롤 가능한 레이아웃
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setSpacing(12)
-        layout.setContentsMargins(10, 10, 10, 10)
+        # 컴팩트 레이아웃 - 스크롤 없이 한 페이지에 모두 표시
+        layout = QVBoxLayout(self)
+        layout.setSpacing(4)
+        layout.setContentsMargins(6, 4, 6, 4)
 
         # 타이틀
         title = QLabel("Backtest Settings")
         title.setObjectName("titleLabel")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 13px; padding: 0px; margin: 0px;")
         layout.addWidget(title)
 
         # --- A. 포트폴리오 ---
         asset_group = QGroupBox("A. Portfolio")
+        asset_group.setStyleSheet("QGroupBox { padding-top: 12px; margin-top: 6px; font-size: 11px; }")
         asset_layout = QVBoxLayout()
-
-        asset_layout.addWidget(QLabel("종목을 추가하고 비율을 설정하세요:"))
+        asset_layout.setSpacing(2)
+        asset_layout.setContentsMargins(4, 4, 4, 4)
 
         # 포트폴리오 행들이 들어갈 컨테이너
         self._portfolio_container = QVBoxLayout()
-        self._portfolio_container.setSpacing(4)
+        self._portfolio_container.setSpacing(1)
         asset_layout.addLayout(self._portfolio_container)
 
         # 종목 추가 버튼 + 비율 합계 표시
         add_row_layout = QHBoxLayout()
-        self.add_ticker_btn = QPushButton("+ Add Ticker")
+        add_row_layout.setSpacing(4)
+        self.add_ticker_btn = QPushButton("+ Add")
         self.add_ticker_btn.setToolTip("포트폴리오에 종목 추가")
+        self.add_ticker_btn.setFixedHeight(22)
+        self.add_ticker_btn.setStyleSheet("font-size: 11px; padding: 1px 6px; min-height: 20px;")
         self.add_ticker_btn.clicked.connect(self._add_empty_row)
         add_row_layout.addWidget(self.add_ticker_btn)
 
+        self.equalize_btn = QPushButton("Equal")
+        self.equalize_btn.setToolTip("모든 종목 비율을 균등하게 분배")
+        self.equalize_btn.setFixedHeight(22)
+        self.equalize_btn.setStyleSheet("font-size: 11px; padding: 1px 6px; min-height: 20px;")
+        self.equalize_btn.clicked.connect(self._equalize_ratios)
+        add_row_layout.addWidget(self.equalize_btn)
+
         self.ratio_total_label = QLabel("Total: 0%")
+        self.ratio_total_label.setStyleSheet("font-size: 11px;")
         self.ratio_total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         add_row_layout.addWidget(self.ratio_total_label)
         asset_layout.addLayout(add_row_layout)
-
-        # 비율 균등 분배 버튼
-        self.equalize_btn = QPushButton("Equal Weight")
-        self.equalize_btn.setToolTip("모든 종목 비율을 균등하게 분배")
-        self.equalize_btn.clicked.connect(self._equalize_ratios)
-        asset_layout.addWidget(self.equalize_btn)
 
         asset_group.setLayout(asset_layout)
         layout.addWidget(asset_group)
 
         # --- B. 기간/적립식 규칙 ---
         period_group = QGroupBox("B. Period / DCA Rule")
+        period_group.setStyleSheet("QGroupBox { padding-top: 12px; margin-top: 6px; font-size: 11px; }")
         period_layout = QVBoxLayout()
+        period_layout.setSpacing(2)
+        period_layout.setContentsMargins(4, 4, 4, 4)
 
-        # 시작일
-        period_layout.addWidget(QLabel("Start Date:"))
+        # 시작일/종료일을 한 행에
+        date_row = QHBoxLayout()
+        date_row.setSpacing(4)
+        date_row.addWidget(QLabel("Start:"))
         self.start_date = QDateEdit()
         self.start_date.setCalendarPopup(True)
         self.start_date.setDisplayFormat("yyyy-MM-dd")
-        period_layout.addWidget(self.start_date)
-
-        # 종료일
-        period_layout.addWidget(QLabel("End Date:"))
+        self.start_date.setFixedHeight(24)
+        date_row.addWidget(self.start_date)
+        date_row.addWidget(QLabel("End:"))
         self.end_date = QDateEdit()
         self.end_date.setCalendarPopup(True)
         self.end_date.setDisplayFormat("yyyy-MM-dd")
-        period_layout.addWidget(self.end_date)
+        self.end_date.setFixedHeight(24)
+        date_row.addWidget(self.end_date)
+        period_layout.addLayout(date_row)
 
-        # 매수 주기 (월별/주별)
-        period_layout.addWidget(QLabel("Buy Frequency:"))
+        # 매수 주기 + 매수일을 한 행에
+        freq_row = QHBoxLayout()
+        freq_row.setSpacing(4)
+        freq_row.addWidget(QLabel("Freq:"))
         self.buy_frequency = QComboBox()
-        self.buy_frequency.addItems(["Monthly (월별)", "Weekly (주별)"])
+        self.buy_frequency.addItems(["Monthly", "Weekly"])
+        self.buy_frequency.setFixedHeight(24)
         self.buy_frequency.currentIndexChanged.connect(self._on_frequency_changed)
-        period_layout.addWidget(self.buy_frequency)
+        freq_row.addWidget(self.buy_frequency)
 
-        # 매수일
-        self.buy_day_label = QLabel("Buy Day of Month:")
-        period_layout.addWidget(self.buy_day_label)
+        self.buy_day_label = QLabel("Day:")
+        freq_row.addWidget(self.buy_day_label)
         self.buy_day = QSpinBox()
         self.buy_day.setRange(1, 28)
+        self.buy_day.setFixedHeight(24)
+        self.buy_day.setFixedWidth(55)
         self.buy_day.setToolTip("매월 매수할 날짜 (1~28)")
-        period_layout.addWidget(self.buy_day)
+        freq_row.addWidget(self.buy_day)
 
-        # 매수 요일 (주별 모드용)
-        self.buy_weekday_label = QLabel("Buy Day of Week:")
-        period_layout.addWidget(self.buy_weekday_label)
+        self.buy_weekday_label = QLabel("Day:")
+        freq_row.addWidget(self.buy_weekday_label)
         self.buy_weekday = QComboBox()
-        self.buy_weekday.addItems([
-            "Monday (월)", "Tuesday (화)", "Wednesday (수)",
-            "Thursday (목)", "Friday (금)",
-        ])
-        period_layout.addWidget(self.buy_weekday)
-        # 초기에는 주별 위젯 숨김
+        self.buy_weekday.addItems(["Mon", "Tue", "Wed", "Thu", "Fri"])
+        self.buy_weekday.setFixedHeight(24)
+        freq_row.addWidget(self.buy_weekday)
         self.buy_weekday_label.setVisible(False)
         self.buy_weekday.setVisible(False)
 
-        # 휴장일 처리
-        period_layout.addWidget(QLabel("Holiday Rule:"))
+        freq_row.addWidget(QLabel("Holiday:"))
         self.holiday_rule = QComboBox()
-        self.holiday_rule.addItems(["before (직전 거래일)", "after (직후 거래일)"])
-        period_layout.addWidget(self.holiday_rule)
+        self.holiday_rule.addItems(["Before", "After"])
+        self.holiday_rule.setFixedHeight(24)
+        freq_row.addWidget(self.holiday_rule)
+        period_layout.addLayout(freq_row)
 
-        # 투자금 (KRW) - 전체 포트폴리오 총 금액
-        self.amount_label = QLabel("Monthly Total Investment (KRW):")
-        period_layout.addWidget(self.amount_label)
+        # 투자금 + 연간 증가율 한 행에
+        amount_row = QHBoxLayout()
+        amount_row.setSpacing(4)
+        self.amount_label = QLabel("Monthly:")
+        amount_row.addWidget(self.amount_label)
         self.monthly_amount = QDoubleSpinBox()
         self.monthly_amount.setRange(10000, 100_000_000)
         self.monthly_amount.setSingleStep(10000)
-        self.monthly_amount.setPrefix("₩ ")
+        self.monthly_amount.setPrefix("₩")
         self.monthly_amount.setDecimals(0)
-        period_layout.addWidget(self.monthly_amount)
-
-        # 연간 투자금 증가율
-        period_layout.addWidget(QLabel("Annual Increase (%):"))
+        self.monthly_amount.setFixedHeight(24)
+        amount_row.addWidget(self.monthly_amount)
+        amount_row.addWidget(QLabel("+"))
         self.annual_increase = QDoubleSpinBox()
         self.annual_increase.setRange(0, 100)
         self.annual_increase.setSingleStep(0.5)
-        self.annual_increase.setSuffix(" %")
+        self.annual_increase.setSuffix("%/yr")
         self.annual_increase.setDecimals(1)
-        period_layout.addWidget(self.annual_increase)
+        self.annual_increase.setFixedHeight(24)
+        self.annual_increase.setFixedWidth(80)
+        amount_row.addWidget(self.annual_increase)
+        period_layout.addLayout(amount_row)
 
         period_group.setLayout(period_layout)
         layout.addWidget(period_group)
 
         # --- C. 전략 선택 ---
         strategy_group = QGroupBox("C. Strategy")
+        strategy_group.setStyleSheet("QGroupBox { padding-top: 12px; margin-top: 6px; font-size: 11px; }")
         strategy_layout = QVBoxLayout()
+        strategy_layout.setSpacing(2)
+        strategy_layout.setContentsMargins(4, 4, 4, 4)
 
         self.strategy_combo = QComboBox()
         self.strategy_combo.addItems(["Pure DCA"])
+        self.strategy_combo.setFixedHeight(24)
         strategy_layout.addWidget(self.strategy_combo)
 
         strategy_group.setLayout(strategy_layout)
@@ -287,11 +307,13 @@ class LeftPanel(QWidget):
 
         # --- 버튼들 ---
         btn_layout = QVBoxLayout()
-        btn_layout.setSpacing(8)
+        btn_layout.setSpacing(3)
 
         # 주가 차트 로드 버튼
         self.chart_btn = QPushButton("Load Price Chart")
         self.chart_btn.setToolTip("선택한 종목의 주가 차트를 로드합니다")
+        self.chart_btn.setFixedHeight(26)
+        self.chart_btn.setStyleSheet("font-size: 11px; min-height: 24px; padding: 2px 8px;")
         self.chart_btn.clicked.connect(self._on_chart_clicked)
         btn_layout.addWidget(self.chart_btn)
 
@@ -299,12 +321,16 @@ class LeftPanel(QWidget):
         self.run_btn = QPushButton("Run Backtest")
         self.run_btn.setObjectName("runButton")
         self.run_btn.setToolTip("백테스트를 실행합니다")
+        self.run_btn.setFixedHeight(32)
+        self.run_btn.setStyleSheet("font-size: 12px; min-height: 30px; padding: 3px 10px;")
         self.run_btn.clicked.connect(self._on_run_clicked)
         btn_layout.addWidget(self.run_btn)
 
         # 결과 저장 버튼
         self.save_btn = QPushButton("Save Results (CSV)")
         self.save_btn.setObjectName("saveButton")
+        self.save_btn.setFixedHeight(26)
+        self.save_btn.setStyleSheet("font-size: 11px; min-height: 24px; padding: 2px 8px;")
         self.save_btn.setEnabled(False)
         btn_layout.addWidget(self.save_btn)
 
@@ -312,12 +338,6 @@ class LeftPanel(QWidget):
 
         # 스페이서
         layout.addStretch()
-
-        scroll.setWidget(container)
-
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(scroll)
 
     def _load_config(self, config: dict):
         """설정값을 위젯에 반영"""
@@ -409,9 +429,9 @@ class LeftPanel(QWidget):
         self.buy_weekday.setVisible(is_weekly)
         # 라벨 변경
         if is_weekly:
-            self.amount_label.setText("Weekly Total Investment (KRW):")
+            self.amount_label.setText("Weekly:")
         else:
-            self.amount_label.setText("Monthly Total Investment (KRW):")
+            self.amount_label.setText("Monthly:")
 
     def get_portfolio(self) -> list[dict]:
         """포트폴리오 종목 리스트 반환"""

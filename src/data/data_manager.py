@@ -157,6 +157,52 @@ class DataManager:
         logger.warning("[환율] 기본값 사용: 1350.0")
         return 1350.0
 
+    def get_dividend_data(
+        self,
+        ticker: str,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame:
+        """
+        배당 데이터를 가져온다 (yfinance의 dividends 속성 사용).
+
+        Returns
+        -------
+        pd.DataFrame  -  index=Date, columns=['Dividend'] (주당 배당금 USD)
+        """
+        ticker = ticker.upper().strip()
+        cache_key = f"DIV_{ticker}_{start}_{end}"
+
+        if cache_key in self._memory_cache:
+            return self._memory_cache[cache_key].copy()
+
+        try:
+            logger.info(f"[배당 다운로드] {ticker} ({start} ~ {end})")
+            t = yf.Ticker(ticker)
+            divs = t.dividends
+            if divs is None or divs.empty:
+                logger.info(f"[배당] {ticker}: 배당 데이터 없음")
+                return pd.DataFrame()
+
+            # 기간 필터링
+            divs.index = pd.to_datetime(divs.index).tz_localize(None)
+            mask = (divs.index >= pd.Timestamp(start)) & (divs.index <= pd.Timestamp(end))
+            divs = divs.loc[mask]
+
+            if divs.empty:
+                logger.info(f"[배당] {ticker}: 선택 기간 내 배당 없음")
+                return pd.DataFrame()
+
+            df = divs.to_frame(name="Dividend")
+            df.index.name = "Date"
+            logger.info(f"[배당 완료] {ticker}: {len(df)}건 (총 ${df['Dividend'].sum():.4f}/share)")
+            self._memory_cache[cache_key] = df
+            return df.copy()
+
+        except Exception as e:
+            logger.warning(f"배당 데이터 조회 실패 ({ticker}): {e}")
+            return pd.DataFrame()
+
     def clear_cache(self, ticker: Optional[str] = None):
         """캐시 삭제. ticker가 None이면 전체 삭제."""
         if ticker:
