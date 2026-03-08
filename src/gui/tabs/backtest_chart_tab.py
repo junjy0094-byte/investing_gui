@@ -270,6 +270,15 @@ class BacktestChartTab(QWidget):
         style = get_matplotlib_style(self._theme)
         price_colors = PRICE_COLORS_DARK if self._theme == "dark" else PRICE_COLORS_LIGHT
 
+        # 오른쪽 여백 계산: 활성화된 추가 축 개수에 따라 동적 조정
+        extra_axes = 0
+        if self.chk_profit.isChecked():
+            extra_axes += 1
+        if self.chk_return.isChecked():
+            extra_axes += 1
+        # 기본 right=0.88 (equity 축 1개), 추가 축당 0.08씩 줄임
+        right_margin = 0.88 - extra_axes * 0.08
+
         # 이전 축 모두 제거
         self.fig.clear()
 
@@ -350,10 +359,14 @@ class BacktestChartTab(QWidget):
                     linewidth=1.2, linestyle="--", label="Invested (KRW)", alpha=0.8,
                 )
 
+            # 추가 축 위치 카운터 (equity 축 바로 바깥부터)
+            next_axis_pos = 1.0
+
             # 5) 수익금 오버레이 (KRW)
             if self.chk_profit.isChecked():
                 ax_profit = self.ax_price.twinx()
-                ax_profit.spines["right"].set_position(("axes", 1.08))
+                next_axis_pos += 0.10
+                ax_profit.spines["right"].set_position(("axes", next_axis_pos))
                 profit_color = "#fab387" if self._theme == "dark" else "#fe640b"
                 ax_profit.plot(
                     df.index, df["Profit_KRW"], color=profit_color,
@@ -368,8 +381,8 @@ class BacktestChartTab(QWidget):
             # 6) 수익률 오버레이
             if self.chk_return.isChecked():
                 ax_return = self.ax_price.twinx()
-                offset = 1.08 if not self.chk_profit.isChecked() else 1.16
-                ax_return.spines["right"].set_position(("axes", offset))
+                next_axis_pos += 0.10
+                ax_return.spines["right"].set_position(("axes", next_axis_pos))
                 ret_color = "#f38ba8" if self._theme == "dark" else "#d20f39"
                 ax_return.plot(
                     df.index, df["Return_Pct"], color=ret_color,
@@ -405,6 +418,6 @@ class BacktestChartTab(QWidget):
             self.ax_price.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
             self.fig.autofmt_xdate(rotation=30)
 
-            self.fig.subplots_adjust(left=0.07, right=0.88, top=0.92, bottom=0.12)
+            self.fig.subplots_adjust(left=0.07, right=right_margin, top=0.92, bottom=0.12)
 
         self.canvas.draw_idle()

@@ -5,7 +5,8 @@
 - 기간, 투자 규칙, 전략 설정
 """
 
-from datetime import date
+from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
 
 from PyQt6.QtCore import Qt, QDate, pyqtSignal, QStringListModel, QTimer
 from PyQt6.QtWidgets import (
@@ -33,6 +34,24 @@ from src.data.ticker_database import (
     parse_ticker_from_display,
     TICKER_DATABASE,
 )
+
+
+class KrwSpinBox(QSpinBox):
+    """KRW 금액 입력 - 콤마 구분 표시 (예: ₩500,000)"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setPrefix("₩")
+
+    def textFromValue(self, value: int) -> str:
+        return f"{value:,}"
+
+    def valueFromText(self, text: str) -> int:
+        clean = text.replace("₩", "").replace(",", "").strip()
+        try:
+            return int(clean)
+        except ValueError:
+            return 0
 
 
 class TickerSearchWidget(QWidget):
@@ -168,7 +187,7 @@ class LeftPanel(QWidget):
         layout.addWidget(title)
 
         # --- A. 포트폴리오 ---
-        asset_group = QGroupBox("A. Portfolio")
+        asset_group = QGroupBox("A. Portfolio (종목 & 비율)")
         asset_group.setStyleSheet("QGroupBox { padding-top: 12px; margin-top: 6px; font-size: 11px; }")
         asset_layout = QVBoxLayout()
         asset_layout.setSpacing(2)
@@ -206,99 +225,135 @@ class LeftPanel(QWidget):
         layout.addWidget(asset_group)
 
         # --- B. 기간/적립식 규칙 ---
-        period_group = QGroupBox("B. Period / DCA Rule")
+        period_group = QGroupBox("B. Backtest Period & DCA Rule (기간 & 적립 규칙)")
         period_group.setStyleSheet("QGroupBox { padding-top: 12px; margin-top: 6px; font-size: 11px; }")
         period_layout = QVBoxLayout()
-        period_layout.setSpacing(2)
+        period_layout.setSpacing(3)
         period_layout.setContentsMargins(4, 4, 4, 4)
 
-        # 시작일/종료일을 한 행에
-        date_row = QHBoxLayout()
-        date_row.setSpacing(4)
-        date_row.addWidget(QLabel("Start:"))
+        # 시작일 (별도 행 + quick 버튼)
+        start_row = QHBoxLayout()
+        start_row.setSpacing(4)
+        start_row.addWidget(QLabel("Start Date (시작일):"))
         self.start_date = QDateEdit()
         self.start_date.setCalendarPopup(True)
         self.start_date.setDisplayFormat("yyyy-MM-dd")
         self.start_date.setFixedHeight(24)
-        date_row.addWidget(self.start_date)
-        date_row.addWidget(QLabel("End:"))
+        self.start_date.setMinimumWidth(110)
+        start_row.addWidget(self.start_date, 1)
+        period_layout.addLayout(start_row)
+
+        # 시작일 퀵 버튼 행
+        start_quick_row = QHBoxLayout()
+        start_quick_row.setSpacing(2)
+        quick_btn_style = "font-size: 10px; padding: 1px 4px; min-height: 18px; min-width: 28px;"
+        self._start_quick_buttons = []
+        self._start_quick_years = [1, 2, 3, 4, 5]  # 기본 연수 (사용자 변경 가능)
+        for yr in self._start_quick_years:
+            btn = QPushButton(f"{yr}Y")
+            btn.setToolTip(f"{yr}년 전부터 시작")
+            btn.setFixedHeight(20)
+            btn.setStyleSheet(quick_btn_style)
+            btn.clicked.connect(lambda checked, y=yr: self._set_start_years_ago(y))
+            start_quick_row.addWidget(btn)
+            self._start_quick_buttons.append(btn)
+        start_quick_row.addStretch()
+        period_layout.addLayout(start_quick_row)
+
+        # 종료일 (별도 행 + Today 버튼)
+        end_row = QHBoxLayout()
+        end_row.setSpacing(4)
+        end_row.addWidget(QLabel("End Date (종료일):"))
         self.end_date = QDateEdit()
         self.end_date.setCalendarPopup(True)
         self.end_date.setDisplayFormat("yyyy-MM-dd")
         self.end_date.setFixedHeight(24)
-        date_row.addWidget(self.end_date)
-        period_layout.addLayout(date_row)
+        self.end_date.setMinimumWidth(110)
+        end_row.addWidget(self.end_date, 1)
+        self.today_btn = QPushButton("Today")
+        self.today_btn.setToolTip("종료일을 오늘 날짜로 설정")
+        self.today_btn.setFixedHeight(22)
+        self.today_btn.setStyleSheet("font-size: 10px; padding: 1px 6px; min-height: 18px;")
+        self.today_btn.clicked.connect(self._set_end_today)
+        end_row.addWidget(self.today_btn)
+        period_layout.addLayout(end_row)
 
-        # 매수 주기 + 매수일을 한 행에
+        # 매수 주기 행
         freq_row = QHBoxLayout()
         freq_row.setSpacing(4)
-        freq_row.addWidget(QLabel("Freq:"))
+        freq_row.addWidget(QLabel("Buy Frequency (매수 주기):"))
         self.buy_frequency = QComboBox()
-        self.buy_frequency.addItems(["Monthly", "Weekly"])
+        self.buy_frequency.addItems(["Monthly (매월)", "Weekly (매주)"])
         self.buy_frequency.setFixedHeight(24)
         self.buy_frequency.currentIndexChanged.connect(self._on_frequency_changed)
-        freq_row.addWidget(self.buy_frequency)
+        freq_row.addWidget(self.buy_frequency, 1)
+        period_layout.addLayout(freq_row)
 
-        self.buy_day_label = QLabel("Day:")
-        freq_row.addWidget(self.buy_day_label)
+        # 매수일 + 휴장일 규칙
+        day_row = QHBoxLayout()
+        day_row.setSpacing(4)
+        self.buy_day_label = QLabel("Buy Day (매수일):")
+        day_row.addWidget(self.buy_day_label)
         self.buy_day = QSpinBox()
         self.buy_day.setRange(1, 28)
         self.buy_day.setFixedHeight(24)
         self.buy_day.setFixedWidth(55)
         self.buy_day.setToolTip("매월 매수할 날짜 (1~28)")
-        freq_row.addWidget(self.buy_day)
+        day_row.addWidget(self.buy_day)
 
-        self.buy_weekday_label = QLabel("Day:")
-        freq_row.addWidget(self.buy_weekday_label)
+        self.buy_weekday_label = QLabel("Buy Day (매수 요일):")
+        day_row.addWidget(self.buy_weekday_label)
         self.buy_weekday = QComboBox()
-        self.buy_weekday.addItems(["Mon", "Tue", "Wed", "Thu", "Fri"])
+        self.buy_weekday.addItems(["Mon (월)", "Tue (화)", "Wed (수)", "Thu (목)", "Fri (금)"])
         self.buy_weekday.setFixedHeight(24)
-        freq_row.addWidget(self.buy_weekday)
+        day_row.addWidget(self.buy_weekday)
         self.buy_weekday_label.setVisible(False)
         self.buy_weekday.setVisible(False)
 
-        freq_row.addWidget(QLabel("Holiday:"))
+        day_row.addWidget(QLabel("Holiday (휴장):"))
         self.holiday_rule = QComboBox()
-        self.holiday_rule.addItems(["Before", "After"])
+        self.holiday_rule.addItems(["Before (직전 거래일)", "After (직후 거래일)"])
         self.holiday_rule.setFixedHeight(24)
-        freq_row.addWidget(self.holiday_rule)
-        period_layout.addLayout(freq_row)
+        day_row.addWidget(self.holiday_rule)
+        period_layout.addLayout(day_row)
 
-        # 투자금 + 연간 증가율 한 행에
+        # 투자금
         amount_row = QHBoxLayout()
         amount_row.setSpacing(4)
-        self.amount_label = QLabel("Monthly:")
+        self.amount_label = QLabel("Investment (투자금):")
         amount_row.addWidget(self.amount_label)
-        self.monthly_amount = QDoubleSpinBox()
+        self.monthly_amount = KrwSpinBox()
         self.monthly_amount.setRange(10000, 100_000_000)
         self.monthly_amount.setSingleStep(10000)
-        self.monthly_amount.setPrefix("₩")
-        self.monthly_amount.setDecimals(0)
         self.monthly_amount.setFixedHeight(24)
-        amount_row.addWidget(self.monthly_amount)
-        amount_row.addWidget(QLabel("+"))
+        amount_row.addWidget(self.monthly_amount, 1)
+        period_layout.addLayout(amount_row)
+
+        # 연간 증가율
+        increase_row = QHBoxLayout()
+        increase_row.setSpacing(4)
+        increase_row.addWidget(QLabel("Annual Increase (연간 증가율):"))
         self.annual_increase = QDoubleSpinBox()
         self.annual_increase.setRange(0, 100)
         self.annual_increase.setSingleStep(0.5)
-        self.annual_increase.setSuffix("%/yr")
+        self.annual_increase.setSuffix(" %/year")
         self.annual_increase.setDecimals(1)
         self.annual_increase.setFixedHeight(24)
-        self.annual_increase.setFixedWidth(80)
-        amount_row.addWidget(self.annual_increase)
-        period_layout.addLayout(amount_row)
+        increase_row.addWidget(self.annual_increase, 1)
+        period_layout.addLayout(increase_row)
 
         period_group.setLayout(period_layout)
         layout.addWidget(period_group)
 
         # --- C. 전략 선택 ---
-        strategy_group = QGroupBox("C. Strategy")
+        strategy_group = QGroupBox("C. Strategy (전략)")
         strategy_group.setStyleSheet("QGroupBox { padding-top: 12px; margin-top: 6px; font-size: 11px; }")
         strategy_layout = QVBoxLayout()
         strategy_layout.setSpacing(2)
         strategy_layout.setContentsMargins(4, 4, 4, 4)
 
         self.strategy_combo = QComboBox()
-        self.strategy_combo.addItems(["Pure DCA"])
+        self.strategy_combo.addItems(["Pure DCA (적립식 매수)"])
         self.strategy_combo.setFixedHeight(24)
         strategy_layout.addWidget(self.strategy_combo)
 
@@ -310,7 +365,7 @@ class LeftPanel(QWidget):
         btn_layout.setSpacing(3)
 
         # 주가 차트 로드 버튼
-        self.chart_btn = QPushButton("Load Price Chart")
+        self.chart_btn = QPushButton("Load Price Chart (주가 차트)")
         self.chart_btn.setToolTip("선택한 종목의 주가 차트를 로드합니다")
         self.chart_btn.setFixedHeight(26)
         self.chart_btn.setStyleSheet("font-size: 11px; min-height: 24px; padding: 2px 8px;")
@@ -318,7 +373,7 @@ class LeftPanel(QWidget):
         btn_layout.addWidget(self.chart_btn)
 
         # Run 백테스트 버튼
-        self.run_btn = QPushButton("Run Backtest")
+        self.run_btn = QPushButton("Run Backtest (백테스트 실행)")
         self.run_btn.setObjectName("runButton")
         self.run_btn.setToolTip("백테스트를 실행합니다")
         self.run_btn.setFixedHeight(32)
@@ -327,7 +382,7 @@ class LeftPanel(QWidget):
         btn_layout.addWidget(self.run_btn)
 
         # 결과 저장 버튼
-        self.save_btn = QPushButton("Save Results (CSV)")
+        self.save_btn = QPushButton("Save Results CSV (결과 저장)")
         self.save_btn.setObjectName("saveButton")
         self.save_btn.setFixedHeight(26)
         self.save_btn.setStyleSheet("font-size: 11px; min-height: 24px; padding: 2px 8px;")
@@ -367,6 +422,11 @@ class LeftPanel(QWidget):
 
         rule = config.get("holiday_rule", "before")
         self.holiday_rule.setCurrentIndex(0 if rule == "before" else 1)
+
+        # 퀵 시작일 버튼 설정 로드
+        quick_years = config.get("quick_start_years", None)
+        if quick_years and isinstance(quick_years, list):
+            self.set_quick_start_years(quick_years)
 
     # ------------------------------------------------------------------
     # 포트폴리오 행 관리
@@ -418,6 +478,34 @@ class LeftPanel(QWidget):
             self.ratio_total_label.setText(f"Total: {total:.0f}% (≠ 100%)")
             self.ratio_total_label.setStyleSheet("color: #f38ba8;")
 
+    def _set_start_years_ago(self, years: int):
+        """시작일을 N년 전으로 설정"""
+        target = date.today() - relativedelta(years=years)
+        self.start_date.setDate(QDate(target.year, target.month, target.day))
+
+    def _set_end_today(self):
+        """종료일을 오늘 날짜로 설정"""
+        today = date.today()
+        self.end_date.setDate(QDate(today.year, today.month, today.day))
+
+    def set_quick_start_years(self, years_list: list[int]):
+        """퀵 시작일 버튼의 연수를 사용자 설정으로 변경"""
+        self._start_quick_years = years_list
+        for i, btn in enumerate(self._start_quick_buttons):
+            if i < len(years_list):
+                yr = years_list[i]
+                btn.setText(f"{yr}Y")
+                btn.setToolTip(f"{yr}년 전부터 시작")
+                btn.setVisible(True)
+                # 기존 연결 해제 후 새로 연결
+                try:
+                    btn.clicked.disconnect()
+                except TypeError:
+                    pass
+                btn.clicked.connect(lambda checked, y=yr: self._set_start_years_ago(y))
+            else:
+                btn.setVisible(False)
+
     def _on_frequency_changed(self, index: int):
         """매수 주기 변경 시 UI 동적 전환"""
         is_weekly = index == 1
@@ -429,9 +517,9 @@ class LeftPanel(QWidget):
         self.buy_weekday.setVisible(is_weekly)
         # 라벨 변경
         if is_weekly:
-            self.amount_label.setText("Weekly:")
+            self.amount_label.setText("Investment (투자금/주):")
         else:
-            self.amount_label.setText("Monthly:")
+            self.amount_label.setText("Investment (투자금/월):")
 
     def get_portfolio(self) -> list[dict]:
         """포트폴리오 종목 리스트 반환"""
